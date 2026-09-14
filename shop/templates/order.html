@@ -1,0 +1,3 @@
+{% extends 'base.html' %}
+{% block title %}Đã đặt hàng — Mộc{% endblock %}
+{% block content %}<section class="confirmation"><div class="checkmark">✓</div><p class="eyebrow">CẢM ƠN BẠN ĐÃ GHÉ MỘC</p><h1>Món đồ nhỏ.<br>Niềm vui mới.</h1><p>Đơn hàng mô phỏng đã được ghi nhận. Không có khoản thanh toán nào được thực hiện.</p><p class="muted small">Mã đơn: {{ order['id'] }}</p><div class="order-lines">{% for item in items %}<div><span>{{ item['name'] }} × {{ item['quantity'] }}</span><strong>{{ (item['price'] * item['quantity'])|vnd }}</strong></div>{% endfor %}<div class="total"><span>Tổng cộng</span><strong>{{ order['total']|vnd }}</strong></div></div><a class="button" href="{{ url_for('catalog') }}">Về cửa hàng ↗</a></section>{% endblock %}

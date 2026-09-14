@@ -1,0 +1,19 @@
+{% extends 'base.html' %}
+{% block content %}
+<section class="hero">
+  <div class="hero-copy"><p class="eyebrow">THE EVERYDAY COLLECTION / 01</p><h1>Góc nhỏ.<br>Cảm hứng <em>lớn.</em></h1><p>Những món đồ được chọn kỹ, để mỗi ngày ngồi vào bàn là một lần bạn thấy thật dễ chịu.</p><a class="button" href="#collection">Khám phá bộ sưu tập <span>↗</span></a><div class="hero-note"><span class="line"></span> Đơn giản, hữu ích và vừa vặn với bạn.</div></div>
+  <div class="hero-art" aria-hidden="true"><div class="sun"></div><div class="desk"></div><div class="hero-book"></div><div class="hero-cup"></div><div class="hero-lamp"><i></i></div><div class="art-label">MAKE ROOM<br><em>for good things.</em></div><span class="edition">MỘC ESSENTIALS — VOL. 01</span></div>
+</section>
+<section id="collection" class="collection">
+  <div class="section-heading"><div><p class="eyebrow">NHỎ MÀ CÓ VÕ</p><h2>Đồ hay cho ngày thường</h2></div><span>{{ products|length }} sản phẩm</span></div>
+  <div class="catalog-tools">
+    <div class="categories" aria-label="Danh mục"><a class="{% if not category %}active{% endif %}" href="{{ url_for('catalog', q=query) }}#collection">Tất cả</a>{% for name in ['Thiết bị', 'Góc bàn', 'Văn phòng phẩm'] %}<a class="{% if category == name %}active{% endif %}" href="{{ url_for('catalog', category=name, q=query) }}#collection">{{ name }}</a>{% endfor %}</div>
+    <form class="search" method="get" action="{{ url_for('catalog') }}#collection"><input type="hidden" name="category" value="{{ category }}"><label class="sr-only" for="search">Tìm sản phẩm</label><input id="search" name="q" value="{{ query }}" placeholder="Tìm món đồ bạn cần…" maxlength="200"><button aria-label="Tìm kiếm">↗</button></form>
+  </div>
+  {% if query %}<p class="muted">Kết quả cho “{{ query }}”</p>{% endif %}
+  <div class="product-grid">
+  {% for product in products %}<article class="product-card"><a class="product-link" href="{{ url_for('product', product_id=product['id']) }}">{% include 'illustration.html' %}<div class="product-meta"><span>{{ product['category'] }}</span><span>↗</span></div><h3>{{ product['name'] }}</h3><p class="price">{{ product['price']|vnd }}</p></a></article>
+  {% else %}<div class="empty"><h3>Chưa tìm thấy món đồ phù hợp.</h3><p>Thử một từ khóa khác hoặc xem tất cả sản phẩm.</p><a href="{{ url_for('catalog') }}">Xem bộ sưu tập →</a></div>{% endfor %}
+  </div>
+</section>
+{% endblock %}

@@ -1,0 +1,8 @@
+{
+  "proxy_port": 8080,
+  "backend_port": 8081,
+  "runtime_dir": "runtime",
+  "proxy_source_ip": "127.0.0.2",
+  "trusted_proxies": ["127.0.0.2/32"],
+  "poll_seconds": 0.2
+}

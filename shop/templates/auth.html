@@ -1,0 +1,15 @@
+{% extends 'base.html' %}
+{% block title %}{{ 'Tạo tài khoản' if mode == 'register' else 'Đăng nhập' }} — Mộc{% endblock %}
+{% block content %}
+<section class="auth-layout"><div class="auth-story"><p class="eyebrow">CHÀO BẠN, MỘC ĐÂY.</p><h1>Một góc riêng,<br>một chút <em>thảnh thơi.</em></h1><p>Lưu những món đồ bạn thích và bắt đầu sắp xếp một góc làm việc thật riêng.</p><div class="story-shape" aria-hidden="true"><span>m.</span></div></div>
+<div class="form-card"><p class="eyebrow">TÀI KHOẢN CỦA BẠN</p><h2>{{ 'Bắt đầu cùng Mộc' if mode == 'register' else 'Mừng bạn trở lại' }}</h2><p class="muted">{{ 'Tạo tài khoản để mua sắm và lưu giỏ hàng.' if mode == 'register' else 'Đăng nhập để tiếp tục ghé thăm góc nhỏ của bạn.' }}</p>
+{% if error %}<p class="notice error" role="alert">{{ error }}</p>{% endif %}
+<form method="post">
+  <input type="hidden" name="csrf_token" value="{{ session['csrf'] }}">
+  {% if mode == 'register' %}<label for="name">Tên của bạn</label><input id="name" name="name" autocomplete="name" minlength="2" maxlength="60" required>{% endif %}
+  <label for="email">Email</label><input id="email" name="email" type="email" autocomplete="username" maxlength="254" required>
+  <label for="password">Mật khẩu</label><input id="password" name="password" type="password" autocomplete="{{ 'new-password' if mode == 'register' else 'current-password' }}" {% if mode == 'register' %}minlength="12"{% endif %} maxlength="128" required>
+  {% if mode == 'register' %}<small class="muted">Dùng từ 12–128 ký tự. Không dùng lại mật khẩu thật của bạn cho bản demo.</small>{% endif %}
+  <button class="button full">{{ 'Tạo tài khoản' if mode == 'register' else 'Đăng nhập' }} <span>↗</span></button>
+</form><p class="auth-switch">{% if mode == 'register' %}Đã có tài khoản? <a href="{{ url_for('login') }}">Đăng nhập</a>{% else %}Lần đầu ghé Mộc? <a href="{{ url_for('register') }}">Tạo tài khoản</a>{% endif %}</p></div></section>
+{% endblock %}

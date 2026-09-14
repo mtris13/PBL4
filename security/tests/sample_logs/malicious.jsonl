@@ -1,0 +1,4 @@
+{"time_iso8601": "2026-01-01T00:00:03+00:00", "remote_addr": "198.51.100.23", "request_method": "GET", "request_uri": "/?id=%27+OR+1%3D1--", "status": 200, "http_user_agent": "Lab browser", "request_id": "lab-1"}
+{"time_iso8601": "2026-01-01T00:00:04+00:00", "remote_addr": "198.51.100.23", "request_method": "GET", "request_uri": "/?q=%3Cscript%3Ealert(1)", "status": 200, "http_user_agent": "Lab browser", "request_id": "lab-1"}
+{"time_iso8601": "2026-01-01T00:00:05+00:00", "remote_addr": "198.51.100.23", "request_method": "GET", "request_uri": "/%252e%252e%252fetc/passwd", "status": 200, "http_user_agent": "Lab browser", "request_id": "lab-1"}
+{"time_iso8601": "2026-01-01T00:00:06+00:00", "remote_addr": "198.51.100.23", "request_method": "GET", "request_uri": "/?q=<script>+UNION+SELECT+name", "status": 200, "http_user_agent": "Lab browser", "request_id": "lab-1"}

@@ -1,0 +1,63 @@
+# Complete standalone lab config. Not an include for /etc/nginx/nginx.conf.
+daemon off;
+worker_processes 1;
+pid @RUNTIME@/nginx.pid;
+error_log @RUNTIME@/nginx-error.log crit;
+events { worker_connections 256; }
+http {
+    include /etc/nginx/mime.types;
+    default_type application/octet-stream;
+    server_tokens off;
+    access_log off;
+    client_max_body_size 16k;
+    client_body_timeout 10s;
+    client_header_timeout 10s;
+    keepalive_timeout 10s;
+    client_body_temp_path @RUNTIME@/client_temp;
+    proxy_temp_path @RUNTIME@/proxy_temp;
+    map $request_uri $pbl4_path {
+        ~^(?<pbl4_original_path>[^?]*) $pbl4_original_path;
+        default /;
+    }
+    # Public search fields only; unknown query fields, UA, body and cookies omitted.
+    log_format pbl4_json escape=json
+        '{"time_iso8601":"$time_iso8601","remote_addr":"$remote_addr",'
+        '"request_method":"$request_method",'
+        '"request_uri":"$pbl4_path?q=$arg_q&category=$arg_category",'
+        '"status":$status,"http_user_agent":"","request_id":"$request_id",'
+        '"http_x_forwarded_for":"$http_x_forwarded_for"}';
+    # Ingress emulates ALB append mode; its upstream connection uses a distinct peer.
+    server {
+        listen 127.0.0.1:@EDGE@;
+        server_name localhost 127.0.0.1;
+        location / {
+            proxy_bind 127.0.0.2;
+            proxy_pass http://127.0.0.1:@ORIGIN@;
+            proxy_http_version 1.1;
+            proxy_set_header Connection "";
+            proxy_set_header Host 127.0.0.1;
+            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto http;
+            proxy_set_header X-Forwarded-Host "";
+            proxy_set_header Forwarded "";
+        }
+    }
+    # Origin logs transport peer unchanged, just as EC2 should log its ALB peer.
+    server {
+        listen 127.0.0.1:@ORIGIN@;
+        server_name localhost 127.0.0.1;
+        allow 127.0.0.2;
+        deny all;
+        access_log @RUNTIME@/access.jsonl pbl4_json;
+        location / {
+            proxy_pass http://127.0.0.1:@BACKEND@;
+            proxy_http_version 1.1;
+            proxy_set_header Connection "";
+            proxy_set_header Host 127.0.0.1;
+            proxy_set_header X-Forwarded-For $http_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto http;
+            proxy_set_header X-Forwarded-Host "";
+            proxy_set_header Forwarded "";
+        }
+    }
+}

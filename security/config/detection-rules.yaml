@@ -1,0 +1,8 @@
+{
+  "decode_passes": 2,
+  "rules": {
+    "sqli": {"enabled": true, "score": 50, "patterns": ["\\bunion\\s+(?:all\\s+)?select\\b", "['\"]\\s*(?:or|and)\\s+['\"]?([0-9]+)['\"]?\\s*=\\s*['\"]?\\1\\b", ";\\s*(?:drop|delete|truncate)\\s+(?:table|from)\\b", "\\b(?:sleep|benchmark)\\s*\\("]},
+    "xss": {"enabled": true, "score": 50, "patterns": ["<\\s*script\\b", "<[^>]{0,512}\\s+on[a-z]+\\s*=", "(?:href|src)\\s*=\\s*['\"]?\\s*javascript:"]},
+    "path_traversal": {"enabled": true, "score": 60, "patterns": ["(?:^|[/\\\\=])\\.\\.(?:[/\\\\]|$)"]}
+  }
+}
