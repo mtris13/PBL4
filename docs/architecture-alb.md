@@ -43,8 +43,10 @@ Như vậy bài báo cáo vẫn có tìm hiểu và xây dựng firewall Linux, 
    dùng địa chỉ đã rewrite để quyết định ai là trusted proxy.
 6. `trusted_proxies`: CIDR cụ thể của subnet ALB. `alb_networks`, `admin_networks`
    phải được bảo vệ khỏi block. Trust bằng CIDR phải đi cùng isolation qua SG.
-7. Health check `/healthz` phải hoạt động; analyzer cần policy loại trừ health checks
-   đáng tin cậy khỏi flood trước khi vận hành. Không dùng header client tùy ý để bỏ qua.
+7. Health check `/healthz` phải hoạt động. Analyzer chỉ loại `GET /healthz` không query
+   khỏi flood khi peer thuộc `trusted_proxies` và request không có XFF; audit ghi
+   `policy_skip`. Client qua ALB có XFF vẫn bị tính. Không dùng User-Agent hay header
+   client tùy ý để bỏ qua; phải đối chiếu access log target thật khi triển khai AWS.
 8. HTTPS termination/certificate, host allowlist và cookie Secure được hoàn thiện trước
    khi dùng tài khoản thật. Local HTTP ở chặng 1 chỉ là ngoại lệ trong loopback lab.
 

@@ -12,12 +12,19 @@ class RequestFloodDetector:
     """
     def __init__(self, settings):
         self.config = settings.thresholds["flood"]
+        self.health = settings.thresholds["trusted_health_check"]
         self.duration = settings.thresholds["block_duration_seconds"]
         self.windows = OrderedDict()
         self.evictions = 0
 
+    def excludes_trusted_health_check(self, event):
+        return (self.config["enabled"] and self.health["exclude_from_flood"]
+                and event.via_trusted_proxy and not event.forwarded_for_present
+                and event.method == self.health["method"] and event.path == self.health["path"]
+                and not event.query_string)
+
     def detect(self, event):
-        if not self.config["enabled"]:
+        if not self.config["enabled"] or self.excludes_trusted_health_check(event):
             return []
         cutoff = event.timestamp - timedelta(seconds=self.config["window_seconds"])
         while self.windows and next(iter(self.windows.values()))[-1] <= cutoff:

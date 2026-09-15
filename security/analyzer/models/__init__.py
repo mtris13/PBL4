@@ -15,6 +15,7 @@ class Event:
     log_source: str
     peer_ip: str
     via_trusted_proxy: bool = False
+    forwarded_for_present: bool = False
 
 
 @dataclass(frozen=True)

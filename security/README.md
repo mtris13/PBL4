@@ -76,7 +76,7 @@ Config này là config mẫu không chứa secret; không cần `.env`.
 | File | Ý nghĩa |
 | --- | --- |
 | `detection-rules.yaml` | enabled, score, regex mỗi loại; decode URL/HTML tối đa 2 lượt mặc định |
-| `thresholds.yaml` | alert ≥40, temporary_block ≥80, block 300 giây; flood ≥20 request trong 10 giây |
+| `thresholds.yaml` | alert ≥40, temporary_block ≥80, block 300 giây; flood ≥20 request trong 10 giây; contract health check tin cậy |
 | `allowlist.yaml` | allowlist, trusted_proxies, alb_networks, admin_networks là IP/CIDR |
 
 Một detector signature chỉ cộng điểm một lần trên mỗi request. Nhiều detector có thể
@@ -147,6 +147,14 @@ Flood là HTTP request flood theo từng IP, không phải nhận diện DDoS t�
 loại nguồn ít hoạt động gần đây và xuất `capacity_warning`. Việc loại bỏ có thể làm
 đếm thiếu. NAT chung có thể gây false positive; tune threshold bằng traffic lab.
 
+`trusted_health_check` chỉ loại khỏi bộ đếm flood khi request khớp chính xác method/path,
+không có query, peer thuộc `trusted_proxies` và không có XFF. Mỗi lần bỏ qua được ghi
+`policy_skip`. Request client đi qua ALB/proxy có XFF vẫn được tính, kể cả khi client gọi
+`/healthz`; peer không tin cậy hoặc header giả cũng không thể kích hoạt ngoại lệ. Policy
+không dựa vào User-Agent vì đây là header client có thể tự đặt. Khi sang AWS phải xác minh
+log health check thật đáp ứng contract; nếu có XFF hoặc khác contract thì hệ thống an toàn
+theo hướng vẫn tính request đó vào flood.
+
 Lease dùng thời gian event để replay sample có kết quả ổn định. Engine gọi `expire()`
 trước mỗi event hợp lệ. Đề xuất lặp lại cùng IP → `already_planned`, không tạo thêm
 lệnh và không gia hạn. Hết hạn → `would_unblock`; request sau đó có thể tạo lease mới.
@@ -165,8 +173,9 @@ Detection gồm `attack_type`, `score`, `source_ip`, `evidence` (mã signature),
 `detector_name`, `recommended_action`, `block_duration_seconds`, `timestamp`.
 Decision chứa score tổng, action, duration, timestamp, reasons và proxy metadata.
 Response có outcome, expiry, command argv nếu có và **`executed: false`**.
-Audit có các kind `detection`, `decision`, `response`, `parse_error`, `rejected_event`,
-`capacity_warning`, `summary`. JSON escaping ngăn control character tạo dòng audit giả.
+Audit có các kind `detection`, `decision`, `response`, `policy_skip`, `parse_error`,
+`rejected_event`, `capacity_warning`, `summary`. JSON escaping ngăn control character
+tạo dòng audit giả.
 
 | Topology | Cách phản ứng phù hợp |
 | --- | --- |
@@ -213,9 +222,10 @@ sample log đúng contract trước ghép hệ thống. Không cần framework w
 ## Kiểm thử
 
 Unit/integration test bao gồm request lành tính và độc hại, SQLi/XSS, traversal double
-encoding, flood boundary/isolation/capacity, scoring nhiều dấu hiệu, parser malformed,
-XFF giả mạo, IP injection, allowlist/proxy/admin/IPv6, idempotence/expiry, audit redaction,
-CLI recovery và kiểm tra adapter không gọi subprocess/os.system.
+encoding, flood boundary/isolation/capacity, health check tin cậy và các trường hợp không
+được bỏ qua, scoring nhiều dấu hiệu, parser malformed, XFF giả mạo, IP injection,
+allowlist/proxy/admin/IPv6, idempotence/expiry, audit redaction, CLI recovery và kiểm tra
+adapter không gọi subprocess/os.system.
 
 Sample `benign.jsonl`, `malicious.jsonl`, `flood.jsonl`, `mixed.jsonl` chỉ là dữ liệu,
 không thực thi payload. Workspace ban đầu trống, chưa có lint/type-check configuration;

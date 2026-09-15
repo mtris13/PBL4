@@ -30,9 +30,11 @@ class NginxJsonParser:
             peer = validated_ip(field("remote_addr"))
             source = peer
             trusted = self.policy.is_trusted(peer)
+            forwarded_present = False
             if trusted:
                 forwarded = field("http_x_forwarded_for", "")
                 if forwarded and forwarded != "-":
+                    forwarded_present = True
                     chain = [validated_ip(part.strip()) for part in forwarded.split(",")]
                     # Rightmost non-trusted hop; never blindly trust the leftmost value.
                     for address in reversed(chain):
@@ -55,7 +57,8 @@ class NginxJsonParser:
                 raise ParseError("invalid_status")
             request_id = field("request_id", "") or None
             return Event(timestamp.astimezone(timezone.utc), source, method, path, query,
-                         status, field("http_user_agent", ""), request_id, log_source, peer, trusted)
+                         status, field("http_user_agent", ""), request_id, log_source, peer,
+                         trusted, forwarded_present)
         except ParseError:
             raise
         except (ValueError, TypeError, KeyError, OverflowError, RecursionError):

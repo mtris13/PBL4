@@ -36,6 +36,17 @@ def load_settings(directory: Path | None = None) -> Settings:
         _positive(thresholds["flood"][key], key)
     if type(thresholds["flood"]["enabled"]) is not bool:
         raise ValueError("flood.enabled must be boolean")
+    health = thresholds.get("trusted_health_check")
+    if not isinstance(health, dict):
+        raise ValueError("trusted_health_check must be an object")
+    if type(health.get("exclude_from_flood")) is not bool:
+        raise ValueError("trusted_health_check.exclude_from_flood must be boolean")
+    method, path = health.get("method"), health.get("path")
+    if (not isinstance(method, str) or not method.isascii() or not method.isalpha() or not method.isupper()
+            or not isinstance(path, str) or not path.startswith("/") or "?" in path
+            or len(path) > thresholds["max_field_chars"]
+            or any(ord(character) < 32 or ord(character) == 127 for character in path)):
+        raise ValueError("Invalid trusted health-check method or path")
     if type(rules["decode_passes"]) is not int or not 0 <= rules["decode_passes"] <= 4:
         raise ValueError("decode_passes must be between 0 and 4")
     for name in ("sqli", "xss", "path_traversal"):

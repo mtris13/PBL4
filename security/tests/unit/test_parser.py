@@ -32,9 +32,12 @@ class ParserTests(unittest.TestCase):
         self.assertEqual(result.source_ip, "203.0.113.9")
         self.assertEqual(result.peer_ip, "10.0.0.4")
         self.assertTrue(result.via_trusted_proxy)
+        self.assertTrue(result.forwarded_for_present)
 
     def test_trusted_without_header_keeps_peer(self):
-        self.assertEqual(self.parser.parse(line(remote_addr="10.0.0.4")).source_ip, "10.0.0.4")
+        result = self.parser.parse(line(remote_addr="10.0.0.4"))
+        self.assertEqual(result.source_ip, "10.0.0.4")
+        self.assertFalse(result.forwarded_for_present)
 
     def test_ipv6(self):
         self.assertEqual(self.parser.parse(line(remote_addr="2001:db8::1")).source_ip, "2001:db8::1")

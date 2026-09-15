@@ -15,7 +15,7 @@ class Engine:
         self.adapter = adapter or DryRunAdapter(settings.policy)
         self.flood = RequestFloodDetector(settings)
         self.detectors = [SqliDetector(settings), XssDetector(settings),
-                          PathTraversalDetector(settings), self.flood]
+                          PathTraversalDetector(settings)]
         self.scorer = RiskScorer(settings)
         self.watermark = None
 
@@ -31,6 +31,11 @@ class Engine:
         records = [{"kind": "response", "response": r} for r in self.adapter.expire(event.timestamp)]
         evictions = self.flood.evictions
         detections = [item for detector in self.detectors for item in detector.detect(event)]
+        if self.flood.excludes_trusted_health_check(event):
+            records.append({"kind": "policy_skip", "policy": "trusted_health_check",
+                            "scope": "request_flood", "line_number": line_number})
+        else:
+            detections.extend(self.flood.detect(event))
         if self.flood.evictions > evictions:
             records.append({"kind": "capacity_warning", "reason": "flood_source_evicted"})
         records.extend({"kind": "detection", "detection": item} for item in detections)

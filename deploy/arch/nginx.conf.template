@@ -24,11 +24,17 @@ http {
         ~^(?<pbl4_original_path>[^?]*) $pbl4_original_path;
         default /;
     }
+    # Preserve the exact no-query health target so the analyzer can apply its
+    # fail-closed trusted-proxy policy. Every other target stays data-minimized.
+    map "$request_method:$request_uri" $pbl4_logged_target {
+        "GET:/healthz" /healthz;
+        default "$pbl4_path?q=$arg_q&category=$arg_category";
+    }
     # Public search fields only; unknown query fields, UA, body and cookies omitted.
     log_format pbl4_json escape=json
         '{"time_iso8601":"$time_iso8601","remote_addr":"$remote_addr",'
         '"request_method":"$request_method",'
-        '"request_uri":"$pbl4_path?q=$arg_q&category=$arg_category",'
+        '"request_uri":"$pbl4_logged_target",'
         '"status":$status,"http_user_agent":"","request_id":"$request_id",'
         '"http_x_forwarded_for":"$http_x_forwarded_for"}';
     # Ingress emulates ALB append mode; its upstream connection uses a distinct peer.

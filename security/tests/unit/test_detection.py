@@ -4,9 +4,11 @@ from security.analyzer.detectors.sqli import SqliDetector
 from security.analyzer.detectors.xss import XssDetector
 from security.analyzer.detectors.path_traversal import PathTraversalDetector
 from security.analyzer.detectors.request_flood import RequestFloodDetector
+from security.analyzer.parsers.nginx_json import NginxJsonParser
 from security.analyzer.scoring import RiskScorer
 from security.configuration import load_settings
-from security.tests.helpers import event
+from security.response.base import AddressPolicy
+from security.tests.helpers import event, line
 
 
 class SignatureTests(unittest.TestCase):
@@ -98,3 +100,26 @@ class FloodTests(unittest.TestCase):
         self.settings.thresholds["flood"]["enabled"] = False
         for _ in range(10):
             self.assertFalse(self.detector.detect(event()))
+
+    def test_only_headerless_exact_health_from_trusted_peer_is_excluded(self):
+        parser = NginxJsonParser(AddressPolicy(trusted_proxies=["10.0.0.0/24"]))
+        health = parser.parse(line("/healthz", remote_addr="10.0.0.4"))
+        self.assertTrue(self.detector.excludes_trusted_health_check(health))
+        for _ in range(5):
+            self.assertEqual(self.detector.detect(health), [])
+        self.assertEqual(self.detector.windows, {})
+
+        included = (
+            parser.parse(line("/healthz", remote_addr="10.0.0.4",
+                              http_x_forwarded_for="203.0.113.8")),
+            parser.parse(line("/healthz?probe=1", remote_addr="10.0.0.4")),
+            parser.parse(line("/healthz", remote_addr="10.0.0.4", request_method="POST")),
+            NginxJsonParser(AddressPolicy()).parse(line("/healthz")),
+        )
+        for request in included:
+            with self.subTest(request=request):
+                detector = RequestFloodDetector(self.settings)
+                self.assertFalse(detector.excludes_trusted_health_check(request))
+                detector.detect(request)
+                detector.detect(request)
+                self.assertTrue(detector.detect(request))

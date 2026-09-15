@@ -26,7 +26,9 @@ Get-Content -LiteralPath .\runtime\audit.jsonl -Tail 10 -Wait
 
 Demo chỉ gửi **25 request cố định đến 127.0.0.1**, gồm request bình thường, ba mẫu
 signature và 21 request health check để kiểm tra cửa sổ flood. IP giả ở đầu XFF phải
-bị bỏ qua. Client thật là loopback nên quyết định block được **suppressed_protected_address**:
+bị bỏ qua. Các request này đi qua edge nên có XFF và vẫn được tính flood; chỉ health
+check đến trực tiếp từ proxy tin cậy, không XFF và khớp đúng contract mới được bỏ qua.
+Client thật là loopback nên quyết định block được **suppressed_protected_address**:
 đây là kết quả an toàn đúng thiết kế, không phải lỗi chặn. Demo không sửa firewall.
 Kết quả lưu ở `runtime/demo-report.json`; unit test riêng dùng IP tài liệu để chứng minh
 `would_block`, lease và unblock preview.

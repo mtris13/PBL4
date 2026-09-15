@@ -2,12 +2,14 @@ import io
 import json
 import unittest
 from contextlib import redirect_stdout, redirect_stderr
+from dataclasses import replace
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
 from security.analyzer.engine import Engine
 from security.configuration import load_settings
 from security.logging import write_record
+from security.response.base import AddressPolicy
 from security.scripts.analyze import bounded_lines, main
 from security.tests.helpers import line
 
@@ -53,6 +55,22 @@ class PipelineTests(unittest.TestCase):
         records = engine.process(line(remote_addr="203.0.113.4"))
         self.assertTrue(any(r["kind"] == "capacity_warning" for r in records))
 
+    def test_trusted_health_check_emits_policy_skip_without_flood_state(self):
+        settings = load_settings()
+        settings = replace(settings, policy=AddressPolicy(trusted_proxies=["10.0.0.0/24"]))
+        engine = Engine(settings)
+        records = engine.process(line("/healthz", remote_addr="10.0.0.4"), 7)
+        skip = next(record for record in records if record["kind"] == "policy_skip")
+        self.assertEqual(skip, {"kind": "policy_skip", "policy": "trusted_health_check",
+                                "scope": "request_flood", "line_number": 7})
+        self.assertEqual(engine.flood.windows, {})
+
+        for _ in range(20):
+            records = engine.process(line("/healthz", seconds=1, remote_addr="10.0.0.4",
+                                          http_x_forwarded_for="203.0.113.8"))
+        self.assertTrue(any(record["detection"].attack_type == "request_flood"
+                            for record in records if record["kind"] == "detection"))
+
     def test_bounded_reader_recovers(self):
         self.assertEqual(list(bounded_lines(io.BytesIO(b"x" * 200 + b"\nok\n"), 10)), [None, b"ok\n"])
 
@@ -92,3 +110,26 @@ class PipelineTests(unittest.TestCase):
             (target / "thresholds.yaml").write_text(json.dumps(thresholds))
             with self.assertRaises(ValueError):
                 load_settings(target)
+
+    def test_invalid_trusted_health_check_config_fails_early(self):
+        root = Path(__file__).resolve().parents[2] / "config"
+        invalid = {
+            "not-an-object": None,
+            "non-boolean-switch": {"exclude_from_flood": "true", "method": "GET", "path": "/healthz"},
+            "lowercase-method": {"exclude_from_flood": True, "method": "get", "path": "/healthz"},
+            "non-string-method": {"exclude_from_flood": True, "method": 7, "path": "/healthz"},
+            "relative-path": {"exclude_from_flood": True, "method": "GET", "path": "healthz"},
+            "path-with-query": {"exclude_from_flood": True, "method": "GET", "path": "/healthz?full=1"},
+            "path-with-control": {"exclude_from_flood": True, "method": "GET", "path": "/healthz\n"},
+            "path-too-long": {"exclude_from_flood": True, "method": "GET", "path": "/" + "h" * 8192},
+        }
+        for name, health in invalid.items():
+            with self.subTest(name=name), TemporaryDirectory() as directory:
+                target = Path(directory)
+                for path in root.glob("*.yaml"):
+                    (target / path.name).write_text(path.read_text(encoding="utf-8"), encoding="utf-8")
+                thresholds = json.loads((target / "thresholds.yaml").read_text())
+                thresholds["trusted_health_check"] = health
+                (target / "thresholds.yaml").write_text(json.dumps(thresholds))
+                with self.assertRaises(ValueError):
+                    load_settings(target)

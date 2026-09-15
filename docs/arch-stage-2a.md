@@ -209,7 +209,7 @@ Tài liệu tham chiếu: [Nginx command options](https://nginx.org/en/docs/swit
 - Clone sạch vào `/home/mtris/projects/PBL4`; local/upstream/remote HEAD cùng commit
   `2fdd004edec2f91e83b3118383dc7fca2e9ffdc6`. Danh tính Git được đặt riêng cho repo.
 - Tạo `.venv` mới trên ext4, cài `requirements-lock.txt`, `pip check` không phát hiện
-  dependency hỏng và 78/78 unittest vượt qua sau các test hồi quy bổ sung.
+  dependency hỏng và 81/81 unittest vượt qua sau các test hồi quy bổ sung.
 - `nginx -t` thành công và `systemd-analyze --user verify` không báo lỗi. Cấu hình ban
   đầu thất bại vì Nginx Arch muốn tạo `/var/lib/nginx/fastcgi`; generator đã được sửa
   để dùng đầy đủ temporary directory riêng trong `runtime/arch`.
@@ -250,11 +250,15 @@ Tài liệu tham chiếu: [Nginx command options](https://nginx.org/en/docs/swit
   bằng chứng UFW bảo vệ port do Docker publish và không liên quan nhận diện HTTP/XFF.
 - `/healthz` ban đầu phát session cookie vì hook CSRF chạy trên mọi request. Endpoint đã
   được tách khỏi việc đọc/tạo session và có test xác nhận health response không còn
-  `Set-Cookie`; đây là hardening health check cho ALB, chưa phải policy loại health traffic
-  khỏi flood detector.
+  `Set-Cookie`. Analyzer cũng đã có ngoại lệ fail-closed: chỉ `GET /healthz` không query,
+  từ peer tin cậy và không có XFF được loại khỏi flood, đồng thời ghi `policy_skip`.
+  Test Nginx thật gửi 25 request từ `127.0.0.2` tạo đúng 25 `policy_skip`, không có
+  `request_flood`, và checkpoint đạt EOF. Client qua edge có XFF vẫn được tính và demo
+  25 request tiếp tục nhận diện đủ bốn loại, gồm flood; checkpoint lại đạt EOF.
 
 Chưa kiểm chứng hoặc chưa triển khai: ảnh hưởng của UFW lên container có port publish,
-persistent flood/lease/TTL/reconciliation, health-check exclusion trong analyzer, auth
-hardening còn lại, chính sách rotation định kỳ/retention, ALB/SG/NACL, AWS WAF hoặc tải
-production. Vì vậy phần Nginx local, host firewall và checkpoint/rotation nền tảng đã đạt,
-nhưng không dùng kết quả này để tuyên bố toàn bộ chặng 2 hay AWS hoàn thành.
+persistent flood/lease/TTL/reconciliation, auth hardening còn lại, chính sách rotation
+định kỳ/retention, ALB/SG/NACL, AWS WAF hoặc tải production. Contract health check vẫn
+phải đối chiếu bằng access log target thật trên AWS. Vì vậy phần Nginx local, host firewall
+và checkpoint/rotation nền tảng đã đạt, nhưng không dùng kết quả này để tuyên bố toàn bộ
+chặng 2 hay AWS hoàn thành.

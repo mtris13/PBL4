@@ -42,6 +42,9 @@ class ArchConfigTests(unittest.TestCase):
         for field in ("$request_body", "$http_cookie", "$http_authorization", "$args"):
             self.assertNotIn(field, files["nginx.conf"])
         self.assertIn("escape=json", files["nginx.conf"])
+        self.assertIn('map "$request_method:$request_uri" $pbl4_logged_target', files["nginx.conf"])
+        self.assertIn('"GET:/healthz" /healthz;', files["nginx.conf"])
+        self.assertIn('"request_uri":"$pbl4_logged_target"', files["nginx.conf"])
         for name, text in files.items():
             if name.endswith(".service"):
                 self.assertIn("UMask=0077", text)
