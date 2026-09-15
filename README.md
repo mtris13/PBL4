@@ -116,14 +116,21 @@ Watcher theo dõi một file/một writer, giữ dòng viết dở, bỏ qua dò
 watermark, cửa sổ flood và lease dry-run. File mode 0600 chỉ chứa IP/timestamp cùng metadata
 state, không chứa request target/header/payload; checkpoint v1 tự nâng cấp với state rỗng.
 Rename/recreate giữ inode cũ đến hai lần EOF ổn định trước khi chuyển file mới. Không chạy
-hai watcher cho cùng file; copytruncate và nhiều rotation quá nhanh vẫn có race. Checkpoint
-được ghi sau khi fsync audit nên crash có thể lặp ít dòng nhưng không ưu tiên bỏ mất log.
-Watcher dọn TTL lúc idle và persist kết quả; đây chưa phải distributed state, lock đa worker
-hay reconciliation với luật firewall/WAF thật. DB SQLite hiện phù hợp một app instance,
-chưa hỗ trợ scale-out nhiều EC2.
+hai watcher cho cùng file. Arch timer kiểm tra mỗi 15 phút, rotate bằng rename khi file đạt
+5 MiB và giữ 8 thế hệ mỗi loại. Access log chỉ rotate khi checkpoint đang tham chiếu đúng
+inode active; rotator tạo file mode 0600 rồi yêu cầu đúng Nginx master cùng user reopen.
+Nếu reopen lỗi, rename được rollback. Retention không xóa inode checkpoint còn dùng.
+Copytruncate, nhiều writer và tăng trưởng trong khoảng giữa hai lần timer vẫn là giới hạn.
+Checkpoint được ghi sau khi fsync audit nên crash có thể lặp ít dòng nhưng không ưu tiên bỏ
+mất log. Watcher dọn TTL lúc idle và persist kết quả; đây chưa phải distributed state, lock
+đa worker hay reconciliation với luật firewall/WAF thật. DB SQLite hiện phù hợp một app
+instance, chưa hỗ trợ scale-out nhiều EC2.
 
 App chưa có quản trị, thanh toán, gửi mail, quên mật khẩu hoặc upload. Proxy chỉ phục vụ
 loopback lab, không phải reverse proxy chống DoS production. Cần Nginx/ALB/WAF cho AWS.
+Lab Arch đã xác nhận Docker published port đi qua DNAT/FORWARD và bypass UFW INPUT trên
+ruleset hiện tại. Container tương lai phải dùng policy `DOCKER-USER`/network riêng hoặc
+không publish ra interface ngoài; không coi `ufw default deny incoming` là đủ cho Docker.
 
 ## Test và các chặng tiếp theo
 
@@ -140,11 +147,10 @@ website/live log/HTTP, `docs/` kiến trúc và tiến độ. Xem thêm:
 - [Các chặng, đầu ra và điều kiện nghiệm thu](docs/milestones.md)
 - [Security core và contract JSONL](security/README.md)
 
-Chặng kế tiếp: dựng Nginx/Linux thật, cấu hình service, hardening log/identity và chuẩn
-bị WAF adapter. Chưa cần tạo tài nguyên AWS để sử dụng chặng 1.
+Chặng Arch đã có Nginx/user services, firewall lab, persistent auth state và bounded log
+rotation. Phần tiếp theo là hạ tầng AWS sau ALB và WAF; chưa gọi API hay tạo tài nguyên AWS.
 
 ## Chặng 2A trên Arch Linux
 
-Đã chuẩn bị [hướng dẫn Git + Nginx + user services](docs/arch-stage-2a.md).
-Người dùng có Arch dual boot, không cần WSL. Cấu hình chờ nginx -t và kiểm thử
-thực tế trên Arch; chưa phải trạng thái triển khai Linux thành công.
+Xem [hướng dẫn Git + Nginx + user services](docs/arch-stage-2a.md) cùng bằng chứng đã
+kiểm thử thực tế trên Arch. Đây vẫn là local lab, không phải triển khai AWS/production.

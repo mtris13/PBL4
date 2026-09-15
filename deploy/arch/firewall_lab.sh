@@ -58,13 +58,14 @@ trap 'exit 143' TERM
 [[ "$EUID" == 0 ]] || fail "run with sudo: sudo bash deploy/arch/firewall_lab.sh"
 [[ -n "${SUDO_USER:-}" && "$SUDO_USER" != root ]] || fail "run from the normal user account via sudo"
 
-for command in ip curl ufw ss runuser python; do
+for command in ip curl ufw ss runuser python systemctl; do
     command -v "$command" >/dev/null || fail "missing command: $command"
 done
 
 UFW_STATUS=$(ufw status verbose)
 grep -q '^Status: active$' <<<"$UFW_STATUS" || fail "UFW must already be active"
 grep -q 'Default: deny (incoming)' <<<"$UFW_STATUS" || fail "UFW incoming default must be deny"
+systemctl is-enabled --quiet ufw.service || fail "ufw.service must be enabled for reboot persistence"
 ! ip netns list | awk '{print $1}' | grep -Fxq "$NETNS" || fail "namespace $NETNS already exists"
 ! ip link show "$HOST_IF" >/dev/null 2>&1 || fail "interface $HOST_IF already exists"
 ! ip -o address show | grep -Eq '198\.18\.0\.[12]/' || fail "test addresses are already in use"

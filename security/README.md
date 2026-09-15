@@ -15,6 +15,13 @@ inode cũ qua hai lần EOF ổn định; copytruncate và rotation liên tiếp
 Watcher reconcile TTL theo wall clock khi idle. Đây vẫn là dry-run một process, chưa phải
 distributed state hay reconciliation với firewall/WAF thật để enforcement production.
 
+Arch lab còn dùng `python -m security.scripts.rotate_logs`: access/audit đạt ngưỡng được
+rename, file active mới mode 0600, Nginx nhận `SIGUSR1` để reopen và retention giữ số thế
+hệ hữu hạn. Access chỉ rotate khi checkpoint bám inode active, không xóa rotated inode mà
+watcher còn tham chiếu; reopen lỗi được rollback. Systemd timer sinh bởi `deploy.arch.render`
+chạy mỗi 15 phút với ngưỡng 5 MiB và giữ 8 thế hệ. Đây là giới hạn vận hành theo chu kỳ,
+không phải hard quota hay log shipper production.
+
 **Mọi response đều là dry-run hoặc preview. Không có code thực thi firewall,
 không gọi AWS, không gửi request tấn công.** Sample dùng địa chỉ IP dành cho tài liệu.
 

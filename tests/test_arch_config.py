@@ -48,11 +48,20 @@ class ArchConfigTests(unittest.TestCase):
         for name, text in files.items():
             if name.endswith(".service"):
                 self.assertIn("UMask=0077", text)
-                self.assertIn("WantedBy=default.target", text)
                 self.assertNotIn("User=root", text)
                 self.assertNotIn("sudo", text)
+                if name != "pbl4-logrotate.service":
+                    self.assertIn("WantedBy=default.target", text)
         self.assertIn("--checkpoint /home/student/PBL4/runtime/arch/watcher.checkpoint.json",
                       files["pbl4-security.service"])
+        rotate = files["pbl4-logrotate.service"]
+        self.assertIn("Type=oneshot", rotate)
+        self.assertIn("--max-bytes 5242880 --keep 8", rotate)
+        self.assertIn("--nginx-pid /home/student/PBL4/runtime/arch/nginx.pid", rotate)
+        timer = files["pbl4-logrotate.timer"]
+        self.assertIn("OnCalendar=*:0/15", timer)
+        self.assertIn("Persistent=true", timer)
+        self.assertIn("WantedBy=timers.target", timer)
 
     def test_standalone_server(self):
         with TemporaryDirectory() as directory:
@@ -71,3 +80,18 @@ class ArchConfigTests(unittest.TestCase):
             path.write_text(json.dumps(config))
             app, _ = load_app(path)
             self.assertTrue(app.config["SESSION_COOKIE_SECURE"])
+
+    def test_docker_firewall_lab_is_isolated_and_reversible(self):
+        script = (Path(__file__).parents[1] / "deploy" / "arch" /
+                  "docker_firewall_lab.sh").read_text(encoding="utf-8")
+        self.assertIn('HOST_IP="198.18.0.5"', script)
+        self.assertIn('--publish "$HOST_IP:$HOST_PORT:$CONTAINER_PORT/tcp"', script)
+        self.assertIn("FROM scratch", script)
+        self.assertIn("--network none --pull=false", script)
+        self.assertIn('iptables -I DOCKER-USER 1 "${RULE[@]}"', script)
+        self.assertIn('iptables -D DOCKER-USER "${RULE[@]}"', script)
+        self.assertIn("trap cleanup EXIT", script)
+        self.assertIn("systemctl is-enabled --quiet ufw.service", script)
+        self.assertNotIn("ufw reset", script)
+        self.assertNotIn("iptables -F", script)
+        self.assertNotIn("0.0.0.0", script)

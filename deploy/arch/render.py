@@ -31,6 +31,26 @@ def build_files(project, edge_port=8080, origin_port=8082, backend_port=8081):
     def encode(value):
         return json.dumps(value, indent=2) + "\n"
 
+    rotate_command = (
+        f"{python} -m security.scripts.rotate_logs "
+        f"--access {runtime}/access.jsonl --audit {runtime}/audit.jsonl "
+        f"--checkpoint {runtime}/watcher.checkpoint.json --nginx-pid {runtime}/nginx.pid "
+        "--max-bytes 5242880 --keep 8"
+    )
+    rotate_service = (
+        "[Unit]\nDescription=PBL4 bounded log rotation\n"
+        "After=pbl4-nginx.service pbl4-security.service\n\n"
+        "[Service]\nType=oneshot\n"
+        f"WorkingDirectory={project}\nUMask=0077\nEnvironment=PYTHONUNBUFFERED=1\n"
+        f"ExecStart={rotate_command}\nNoNewPrivileges=yes\n"
+    )
+    rotate_timer = (
+        "[Unit]\nDescription=Run PBL4 bounded log rotation periodically\n\n"
+        "[Timer]\nOnCalendar=*:0/15\nPersistent=true\n"
+        "AccuracySec=1min\nRandomizedDelaySec=30s\nUnit=pbl4-logrotate.service\n\n"
+        "[Install]\nWantedBy=timers.target\n"
+    )
+
     return {
         "nginx.conf": nginx,
         "app.json": encode({"port": backend_port, "database": f"{runtime}/shop.sqlite3",
@@ -46,6 +66,8 @@ def build_files(project, edge_port=8080, origin_port=8082, backend_port=8081):
         "pbl4-security.service": unit("PBL4 security watcher dry-run",
                                        f"{python} -m security.scripts.watch --input {runtime}/access.jsonl --audit {runtime}/audit.jsonl --checkpoint {runtime}/watcher.checkpoint.json --policy {runtime}/policy.json",
                                        dependencies="Wants=pbl4-nginx.service\nAfter=pbl4-nginx.service"),
+        "pbl4-logrotate.service": rotate_service,
+        "pbl4-logrotate.timer": rotate_timer,
     }
 
 

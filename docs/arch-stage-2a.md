@@ -55,7 +55,7 @@ Từ thư mục PBL4 trên Arch:
 ```bash
 .venv/bin/python -m deploy.arch.render
 nginx -t -p "$PWD/runtime/arch/" -c "$PWD/runtime/arch/nginx.conf"
-systemd-analyze --user verify runtime/arch/pbl4-shop.service runtime/arch/pbl4-nginx.service runtime/arch/pbl4-security.service
+systemd-analyze --user verify runtime/arch/pbl4-shop.service runtime/arch/pbl4-nginx.service runtime/arch/pbl4-security.service runtime/arch/pbl4-logrotate.service runtime/arch/pbl4-logrotate.timer
 ```
 
 Bộ sinh cần đường dẫn tuyệt đối Linux không chứa dấu cách/ký tự đặc biệt; default
@@ -71,7 +71,7 @@ temporary của Nginx (client body, proxy, FastCGI, SCGI và uWSGI) cũng nằm 
 database. Sau khi đổi đường dẫn clone phải tạo lại .venv, render và cài lại user units.
 Bộ sinh chỉ ghi file, không bật service hoặc firewall.
 
-## 3. Bật ba service riêng của user
+## 3. Bật ba service và log-rotation timer của user
 
 Dừng lab.run cũ nếu nó đang chiếm cổng. Chỉ tiếp tục khi nginx -t đã thành công.
 
@@ -80,16 +80,21 @@ mkdir -p ~/.config/systemd/user
 install -m 644 runtime/arch/pbl4-shop.service ~/.config/systemd/user/
 install -m 644 runtime/arch/pbl4-nginx.service ~/.config/systemd/user/
 install -m 644 runtime/arch/pbl4-security.service ~/.config/systemd/user/
+install -m 644 runtime/arch/pbl4-logrotate.service ~/.config/systemd/user/
+install -m 644 runtime/arch/pbl4-logrotate.timer ~/.config/systemd/user/
 systemctl --user daemon-reload
 systemctl --user start pbl4-shop pbl4-nginx pbl4-security
+systemctl --user enable --now pbl4-logrotate.timer
 systemctl --user status pbl4-shop pbl4-nginx pbl4-security --no-pager
+systemctl --user list-timers pbl4-logrotate.timer --no-pager
 ```
 
 Không dùng sudo systemctl cho các unit này. Nginx chạy dưới chính user của bạn,
 sử dụng complete config riêng bằng -p/-c, không dùng nginx.service hệ thống và
 không sửa /etc/nginx/nginx.conf. File mime.types được đọc từ /etc/nginx/mime.types.
-Service tự restart khi process lỗi, nhưng không đồng nghĩa application ready;
-phải kiểm tra health và audit. Service user chỉ gắn với phiên user; chưa bật linger.
+Ba service dài hạn tự restart khi process lỗi, nhưng không đồng nghĩa application ready;
+phải kiểm tra health và audit. Timer chạy rotator oneshot mỗi 15 phút, mặc định file đạt
+5 MiB mới rotate và giữ 8 thế hệ. Service user chỉ gắn với phiên user; chưa bật linger.
 
 ## 4. Kiểm chứng trên Arch
 
@@ -142,10 +147,11 @@ Dừng lab:
 
 ```bash
 systemctl --user stop pbl4-security pbl4-nginx pbl4-shop
+systemctl --user disable --now pbl4-logrotate.timer
 ```
 
-Chưa enable mặc định. Khi đã kiểm thử ổn mới có thể dùng systemctl --user enable cho
-ba unit để chạy khi user đăng nhập; không hứa chạy lúc chưa đăng nhập sau reboot.
+Ba service dài hạn chưa enable mặc định. Timer rotation được enable sau kiểm thử; điều này
+không hứa chạy lúc chưa đăng nhập sau reboot vì user linger vẫn chưa bật.
 
 ## 5. Log, firewall và phần chưa áp dụng
 
@@ -153,7 +159,12 @@ Nginx origin giữ encoded path gốc, chỉ q/category trong query; bỏ body, 
 Authorization và user agent. Không đưa secret vào path/q/category. Log error mức
 crit để giảm raw request trong error log; vẫn coi mọi file runtime là dữ liệu riêng.
 Nginx log timestamp có độ chính xác giây; một worker giữ write ordering đơn giản.
-Chưa tự rotate log; lab cần theo dõi dung lượng, không chạy dài hạn như production.
+`pbl4-logrotate.timer` chạy mỗi 15 phút. Rotator dùng lock chống chạy chồng, chỉ xoay access
+khi checkpoint bám đúng inode active, rename file rồi xác thực PID/cùng UID/tên Nginx trước
+khi gửi `SIGUSR1`. File active/lock/rotated mode 0600; reopen lỗi được rollback. Audit dùng
+rename tương tự; retention giữ 8 bản mỗi loại và không xóa inode checkpoint còn tham chiếu.
+Không nén để tránh writer/follower đang giữ file descriptor. Đây là bounded retention theo
+chu kỳ, nên active file vẫn có thể vượt 5 MiB giữa hai lần timer và không thay thế log shipper.
 
 Trước bước firewall, đọc ruleset (chỉ chạy lệnh có công cụ tương ứng):
 
@@ -165,10 +176,27 @@ sudo ip6tables -S
 ```
 
 Ruleset phải được review trước khi bật hoặc đổi firewall; không dùng `ufw reset`,
-`iptables -F` hay sửa chain Docker. Sau lần review ngày 2026-09-15, UFW được chọn làm
-công cụ quản lý host firewall và bật với default deny incoming. Không bật chồng một
-nftables service độc lập. Linux firewall bảo vệ host/cổng; phương án HTTP sau ALB vẫn
-dùng WAF ở chặng sau.
+`iptables -F` hay sửa các chain Docker tự quản lý. Sau lần review ngày 2026-09-15, UFW
+được chọn làm công cụ quản lý host firewall và bật với default deny incoming. Chỉ lab
+Docker bên dưới dùng một rule exact tạm thời trong chain `DOCKER-USER` dành cho quản trị.
+Không bật chồng một nftables service độc lập. Linux firewall bảo vệ host/cổng; phương án
+HTTP sau ALB vẫn dùng WAF ở chặng sau.
+
+Trên Arch, `ufw enable` nạp rules hiện tại nhưng không tự bảo đảm systemd unit sẽ chạy ở
+lần boot sau. Sau khi đã review rule và chắc chắn không khóa đường quản trị, bật cả runtime
+lẫn boot persistence rồi kiểm tra lại:
+
+```bash
+sudo ufw enable
+sudo systemctl enable --now ufw.service
+sudo ufw status verbose
+systemctl is-enabled ufw.service
+```
+
+Hai firewall lab đều fail closed nếu UFW chưa active, default incoming không phải deny
+hoặc `ufw.service` chưa enabled. Máy hiện tại từng qua reboot với `ufw.conf` còn
+`ENABLED=yes` nhưng unit disabled/inactive, vì vậy rules không được nạp cho đến khi service
+được enable; chỉ nhìn file cấu hình không phải bằng chứng firewall kernel đang hoạt động.
 
 ### Kiểm thử UFW cô lập ở chặng 2B
 
@@ -199,6 +227,22 @@ ip link show pbl4fw-host
 `PBL4 temporary firewall lab` không được còn lại. Nếu script báo không xóa được rule,
 dùng `sudo ufw status numbered` để review chính xác trước khi xóa, không dùng `ufw reset`.
 
+### Kiểm thử UFW với Docker published port
+
+UFW `INPUT` không nhất thiết nhìn thấy port Docker đã DNAT qua `FORWARD`. Script thứ hai
+dựng veth `198.18.0.5/30`–`198.18.0.6/30`, build local một image `FROM scratch` bằng binary
+Go tĩnh và chỉ publish `198.18.0.5:19081`; không pull image, bind Wi-Fi hay gọi Internet:
+
+```bash
+sudo bash deploy/arch/docker_firewall_lab.sh
+```
+
+Pha đầu ghi nhận chính xác baseline là allow hay deny thay vì giả định. Pha hai thêm đúng
+một rule tạm ở chain dành cho quản trị `DOCKER-USER`, match interface cùng original
+destination/port bằng conntrack và xác nhận deny. Pha ba xóa rule rồi yêu cầu baseline cũ
+quay lại. `trap` dọn container, image, namespace, veth, rule và thư mục build. Script từ
+chối chạy nếu tên/IP/port/image đã tồn tại; không flush chain hoặc sửa cấu hình UFW.
+
 Tài liệu tham chiếu: [Nginx command options](https://nginx.org/en/docs/switches.html),
 [proxy_bind](https://nginx.org/en/docs/http/ngx_http_proxy_module.html#proxy_bind),
 [JSON access log](https://nginx.org/en/docs/http/ngx_http_log_module.html).
@@ -210,13 +254,13 @@ Tài liệu tham chiếu: [Nginx command options](https://nginx.org/en/docs/swit
 - Clone sạch vào `/home/mtris/projects/PBL4`; local/upstream/remote HEAD cùng commit
   `2fdd004edec2f91e83b3118383dc7fca2e9ffdc6`. Danh tính Git được đặt riêng cho repo.
 - Tạo `.venv` mới trên ext4, cài `requirements-lock.txt`, `pip check` không phát hiện
-  dependency hỏng và 95/95 unittest vượt qua sau các test hồi quy bổ sung.
+  dependency hỏng và 101/101 unittest vượt qua sau các test hồi quy bổ sung.
 - `nginx -t` thành công và `systemd-analyze --user verify` không báo lỗi. Cấu hình ban
   đầu thất bại vì Nginx Arch muốn tạo `/var/lib/nginx/fastcgi`; generator đã được sửa
   để dùng đầy đủ temporary directory riêng trong `runtime/arch`.
 - Ba user service `pbl4-shop`, `pbl4-nginx`, `pbl4-security` đều active nhưng vẫn
-  disabled; chưa enable và chưa bật linger. Không dùng nginx system service hoặc sửa
-  `/etc/nginx/nginx.conf`.
+  disabled; `pbl4-logrotate.timer` active/enabled và chạy oneshot thành công. Chưa bật
+  linger. Không dùng nginx system service hoặc sửa `/etc/nginx/nginx.conf`.
 - Ingress `http://127.0.0.1:8080/healthz` trả 200; origin truy cập trực tiếp qua
   `127.0.0.1:8082` trả 403; backend loopback `127.0.0.1:8081` trả 200.
 - Luồng HTTP thật đăng ký → đăng nhập → thêm giỏ → đặt đơn đã tạo một order đúng giá
@@ -237,6 +281,13 @@ Tài liệu tham chiếu: [Nginx command options](https://nginx.org/en/docs/swit
   `response`), checkpoint chuyển sang inode mới và offset 249. Test tự động còn kiểm tra
   dòng ghi muộn vào inode cũ, partial line qua restart và resume khi rotation xảy ra lúc
   watcher đang dừng. Copytruncate vẫn được nhận diện nhưng không tuyên bố hết race.
+- Rotator định kỳ đã được triển khai và kiểm chứng live lần nữa: access inode 264107 với
+  147 dòng được rename nguyên inode, Nginx mở inode mới 279560; request health kế tiếp
+  thành watcher line 250 và checkpoint chuyển đúng inode/offset mới. Audit active ghi
+  `source_reset`, `decision`, `response`, `state_reconciled`; access, audit, checkpoint,
+  lock và rotated files đều mode 0600. Timer 15 phút đang active/enabled; lần mặc định
+  dưới 5 MiB trả `below_threshold`. Unit test còn kiểm tra rollback khi reopen lỗi, chờ
+  watcher, giới hạn thế hệ và bảo toàn inode checkpoint.
 - Checkpoint v1 live đã tự nâng lên v2 mode 0600 tại EOF với `state_resume=legacy_reset`.
   Test tiếp theo gửi 10 request qua edge, checkpoint giữ cửa sổ 10; restart watcher báo
   `state_resume=checkpoint`; thêm 10 request trong cùng cửa sổ tạo size 20 và đúng một
@@ -246,8 +297,8 @@ Tài liệu tham chiếu: [Nginx command options](https://nginx.org/en/docs/swit
   policy mismatch đều fail closed. Engine state live đã nâng lên v2, bind với policy và
   adapter, báo `state_resume=checkpoint_upgrade`, vẫn ở EOF.
 - Đã đọc ruleset trước khi bật firewall. Docker 29.7.2 đang quản lý các chain NAT/FORWARD
-  qua iptables-nft; không có container chạy hoặc port container được publish. Không flush
-  hay sửa chain `DOCKER*`. UFW sau đó được bật với logging low, deny incoming, allow
+  qua iptables-nft; trước lab không có container chạy hoặc port container được publish.
+  Không flush hay sửa chain Docker tự quản lý. UFW sau đó được bật với logging low, deny incoming, allow
   outgoing, deny routed và IPv6; INPUT policy thực tế là DROP cho cả IPv4/IPv6. Website
   loopback vẫn trả 200 và origin trực tiếp vẫn trả 403.
 - Script `deploy/arch/firewall_lab.sh` đã chạy thật bằng sudo với network namespace ngày
@@ -257,6 +308,17 @@ Tài liệu tham chiếu: [Nginx command options](https://nginx.org/en/docs/swit
   còn namespace `pbl4-fw-client`, interface `pbl4fw-host`, listener TCP 19080 hoặc rule
   tạm trong file cấu hình UFW. Đây là bằng chứng INPUT allow/deny trên host; không phải
   bằng chứng UFW bảo vệ port do Docker publish và không liên quan nhận diện HTTP/XFF.
+- Một reboot sau đó cho thấy `ufw.conf` vẫn `ENABLED=yes` nhưng `ufw.service` disabled và
+  firewall inactive. Unit đã được `enable --now`; UFW hiện active/enabled với default deny
+  incoming/routed. Cả hai lab giờ đều kiểm tra service enabled trước khi tạo tài nguyên.
+- `deploy/arch/docker_firewall_lab.sh` đã chạy thật bằng sudo và build image scratch cục bộ.
+  Peer veth truy cập được published port dù UFW INPUT default deny (`baseline_allowed=1`),
+  chứng minh DNAT/FORWARD của Docker bypass lớp INPUT trên ruleset này. Một rule exact tạm
+  trong `DOCKER-USER`, match ingress interface và original destination/port, đã chặn kết
+  nối; xóa rule khôi phục baseline. Kết quả cuối `RESULT: PASS` có `cleanup=pass`; kiểm tra
+  sau đó không còn interface `pbl4dk-host` hoặc listener 19081. Không cài rule lâu dài vì
+  lab hiện không publish dịch vụ; container tương lai phải có policy `DOCKER-USER`/network
+  riêng hoặc không publish ra interface ngoài, không được dựa riêng vào UFW INPUT.
 - `/healthz` ban đầu phát session cookie vì hook CSRF chạy trên mọi request. Endpoint đã
   được tách khỏi việc đọc/tạo session và có test xác nhận health response không còn
   `Set-Cookie`. Analyzer cũng đã có ngoại lệ fail-closed: chỉ `GET /healthz` không query,
@@ -272,9 +334,9 @@ Tài liệu tham chiếu: [Nginx command options](https://nginx.org/en/docs/swit
   lưu HMAC identity, session DB chỉ lưu HMAC token. Local HTTP không phát HSTS/Secure;
   production-mode test xác nhận cả hai bật và session không refresh theo mỗi request.
 
-Chưa kiểm chứng hoặc chưa triển khai: ảnh hưởng của UFW lên container có port publish,
-email verification/password reset/MFA, rate limit client-IP ở ingress, chính sách rotation
-định kỳ/retention, multi-worker/distributed state, đối soát luật enforcement, ALB/SG/NACL,
+Chưa kiểm chứng hoặc chưa triển khai: email verification/password reset/MFA,
+rate limit client-IP ở ingress,
+multi-worker/distributed state, đối soát luật enforcement, ALB/SG/NACL,
 AWS WAF hoặc tải production. Contract health check vẫn phải đối chiếu bằng access log target
 thật trên AWS. Vì vậy phần Nginx local, host firewall, auth và checkpoint/rotation/state
 dry-run nền tảng đã đạt, nhưng không dùng kết quả này để tuyên bố toàn bộ chặng 2 hay AWS
