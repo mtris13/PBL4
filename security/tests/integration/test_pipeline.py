@@ -111,6 +111,18 @@ class PipelineTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 load_settings(target)
 
+    def test_invalid_lease_capacity_fails_early(self):
+        root = Path(__file__).resolve().parents[2] / "config"
+        with TemporaryDirectory() as directory:
+            target = Path(directory)
+            for path in root.glob("*.yaml"):
+                (target / path.name).write_text(path.read_text(encoding="utf-8"), encoding="utf-8")
+            thresholds = json.loads((target / "thresholds.yaml").read_text())
+            thresholds["max_active_leases"] = True
+            (target / "thresholds.yaml").write_text(json.dumps(thresholds))
+            with self.assertRaises(ValueError):
+                load_settings(target)
+
     def test_invalid_trusted_health_check_config_fails_early(self):
         root = Path(__file__).resolve().parents[2] / "config"
         invalid = {

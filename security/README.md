@@ -7,11 +7,13 @@ website đang chạy hay dependency bên ngoài. Môi trường phát triển hi
 **Cập nhật chặng local:** core đã được chạy lại trên Python 3.12.14. Website và proxy
 local hiện có ở README gốc. `python -m security.scripts.watch --input LOG --audit AUDIT`
 đọc log liên tục ở chế độ dry-run; có thể truyền `--config-dir` và `--policy` (JSON đầy
-đủ các nhóm địa chỉ). Truyền thêm `--checkpoint STATE.json` để resume bằng metadata
-device/inode/offset/line number; không có cờ này thì watcher vẫn đọc từ đầu. Checkpoint
-được replace atomically sau khi audit đã flush+fsync. Rename/recreate drain inode cũ qua
-hai lần EOF ổn định; copytruncate và rotation liên tiếp quá nhanh vẫn có race. Engine
-flood/lease chưa persistent, vì vậy chưa dùng watcher này để enforcement production.
+đủ các nhóm địa chỉ). Truyền thêm `--checkpoint STATE.json` để resume bằng checkpoint v2:
+device/inode/offset/line number cùng watermark, cửa sổ flood và lease dry-run có giới hạn.
+Checkpoint mode 0600 không chứa request target/header/payload; v1 được đọc và nâng cấp với
+state rỗng. File được replace atomically sau khi audit đã flush+fsync. Rename/recreate drain
+inode cũ qua hai lần EOF ổn định; copytruncate và rotation liên tiếp quá nhanh vẫn có race.
+Watcher reconcile TTL theo wall clock khi idle. Đây vẫn là dry-run một process, chưa phải
+distributed state hay reconciliation với firewall/WAF thật để enforcement production.
 
 **Mọi response đều là dry-run hoặc preview. Không có code thực thi firewall,
 không gọi AWS, không gửi request tấn công.** Sample dùng địa chỉ IP dành cho tài liệu.
@@ -76,7 +78,7 @@ Config này là config mẫu không chứa secret; không cần `.env`.
 | File | Ý nghĩa |
 | --- | --- |
 | `detection-rules.yaml` | enabled, score, regex mỗi loại; decode URL/HTML tối đa 2 lượt mặc định |
-| `thresholds.yaml` | alert ≥40, temporary_block ≥80, block 300 giây; flood ≥20 request trong 10 giây; contract health check tin cậy |
+| `thresholds.yaml` | alert ≥40, temporary_block ≥80, block 300 giây; tối đa 10.000 lease; flood ≥20 request trong 10 giây; contract health check tin cậy |
 | `allowlist.yaml` | allowlist, trusted_proxies, alb_networks, admin_networks là IP/CIDR |
 
 Một detector signature chỉ cộng điểm một lần trên mỗi request. Nhiều detector có thể
@@ -156,16 +158,21 @@ log health check thật đáp ứng contract; nếu có XFF hoặc khác contrac
 theo hướng vẫn tính request đó vào flood.
 
 Lease dùng thời gian event để replay sample có kết quả ổn định. Engine gọi `expire()`
-trước mỗi event hợp lệ. Đề xuất lặp lại cùng IP → `already_planned`, không tạo thêm
-lệnh và không gia hạn. Hết hạn → `would_unblock`; request sau đó có thể tạo lease mới.
-EOF không tự nhảy thời gian: xem `summary.active_preview_leases`; consumer gọi
-`adapter.expire(now)` với clock phù hợp nếu cần mô phỏng hết hạn khi không có request.
-Không trộn wall clock với timestamp lịch sử khi replay.
+trước mỗi event hợp lệ. Đề xuất lặp lại cùng IP → `already_planned`, không tạo thêm lệnh
+và không gia hạn. Hết hạn → `would_unblock`; request sau đó có thể tạo lease mới. Khi đạt
+`max_active_leases`, adapter trả `lease_capacity_reached` và không tạo command. Analyze CLI
+vẫn thuần event-time; watcher daemon gọi reconciliation theo wall clock cả khi idle.
 
-State nằm trong RAM, mất khi restart. Lease và idempotence chỉ áp dụng trong một process,
-chưa kiểm tra luật hệ điều hành đang có. Trước khi thêm executor thật phải có durable
-store, timer độc lập, reconciliation sau crash/restart, giới hạn lease, ownership luật
-và kiểm tra rule hiện hữu. Bản hiện tại không có scheduler hay daemon production.
+Khi có `--checkpoint`, state flood/lease và watermark được commit nguyên tử cùng vị trí
+input sau khi audit đã fsync. Crash trong khe trước checkpoint có thể replay/audit lặp nhưng
+không skip log. State sai schema, IP/timestamp không hợp lệ, config flood không khớp hoặc
+file quá 32 MiB làm watcher fail closed. Nếu inode checkpoint mất/truncated, engine reset
+state và audit `state_reset` trước khi đọc nguồn mới. State còn bind với trusted/protected
+networks, loại adapter và giới hạn lease; thay policy không tương thích sẽ fail closed thay
+vì dùng lại identity cũ. `state_reconciled` ghi số flood source hết hạn; lease hết hạn sinh
+response `would_unblock`. Không có checkpoint thì state vẫn chỉ ở RAM. Không chạy nhiều
+watcher trên cùng checkpoint: chưa có file lock, shared/distributed store, ownership luật
+hay đối soát trạng thái hệ điều hành/WAF. Các command vẫn không chạy.
 
 ## Contract response và AWS
 
@@ -174,8 +181,8 @@ Detection gồm `attack_type`, `score`, `source_ip`, `evidence` (mã signature),
 Decision chứa score tổng, action, duration, timestamp, reasons và proxy metadata.
 Response có outcome, expiry, command argv nếu có và **`executed: false`**.
 Audit có các kind `detection`, `decision`, `response`, `policy_skip`, `parse_error`,
-`rejected_event`, `capacity_warning`, `summary`. JSON escaping ngăn control character
-tạo dòng audit giả.
+`rejected_event`, `capacity_warning`, `source_reset`, `state_reset`, `state_reconciled`,
+`watch_started`, `summary`. JSON escaping ngăn control character tạo dòng audit giả.
 
 | Topology | Cách phản ứng phù hợp |
 | --- | --- |
@@ -222,9 +229,10 @@ sample log đúng contract trước ghép hệ thống. Không cần framework w
 ## Kiểm thử
 
 Unit/integration test bao gồm request lành tính và độc hại, SQLi/XSS, traversal double
-encoding, flood boundary/isolation/capacity, health check tin cậy và các trường hợp không
-được bỏ qua, scoring nhiều dấu hiệu, parser malformed, XFF giả mạo, IP injection,
-allowlist/proxy/admin/IPv6, idempotence/expiry, audit redaction, CLI recovery và kiểm tra
+encoding, flood boundary/isolation/capacity và restart persistence, health check tin cậy
+cùng các trường hợp không được bỏ qua, scoring nhiều dấu hiệu, parser malformed, XFF giả
+mạo, IP injection, allowlist/proxy/admin/IPv6, lease idempotence/idle expiry/capacity,
+checkpoint v1 migration/corruption/source reset, audit redaction, CLI recovery và kiểm tra
 adapter không gọi subprocess/os.system.
 
 Sample `benign.jsonl`, `malicious.jsonl`, `flood.jsonl`, `mixed.jsonl` chỉ là dữ liệu,

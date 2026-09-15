@@ -69,6 +69,14 @@ class AdapterTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 DryRunAdapter(AddressPolicy()).respond(block(**changes))
 
+    def test_lease_capacity_fails_closed(self):
+        adapter = DryRunAdapter(AddressPolicy(), max_active_leases=1)
+        self.assertEqual(adapter.respond(block("198.51.100.23")).outcome, "would_block")
+        result = adapter.respond(block("203.0.113.9"))
+        self.assertEqual(result.outcome, "lease_capacity_reached")
+        self.assertEqual(result.commands, ())
+        self.assertNotIn("203.0.113.9", adapter.leases)
+
     def test_waf_explicit_placeholder(self):
         self.assertEqual(AwsWafAdapter().respond(block()).outcome, "not_implemented")
         self.assertEqual(AwsWafAdapter().expire(START), [])

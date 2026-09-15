@@ -2,6 +2,7 @@
   "alert_score": 40,
   "block_score": 80,
   "block_duration_seconds": 300,
+  "max_active_leases": 10000,
   "flood": {"enabled": true, "window_seconds": 10, "request_threshold": 20, "score": 80, "max_sources": 10000},
   "trusted_health_check": {"exclude_from_flood": true, "method": "GET", "path": "/healthz"},
   "max_line_bytes": 65536,

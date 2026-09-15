@@ -1,6 +1,8 @@
 import json
 import unittest
+from copy import deepcopy
 from dataclasses import replace
+from datetime import datetime, timezone
 from email.message import Message
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -63,6 +65,8 @@ class LiveLogTests(unittest.TestCase):
         finally:
             first.follower.close()
         payload = json.loads(checkpoint.read_text(encoding="utf-8"))
+        self.assertEqual(payload["version"], 2)
+        self.assertIn("engine", payload)
         self.assertEqual(payload["offset"], self.input.stat().st_size)
         self.assertEqual(payload["line_number"], 1)
         self.assertNotIn("union", checkpoint.read_text(encoding="utf-8").lower())
@@ -80,6 +84,149 @@ class LiveLogTests(unittest.TestCase):
             records = resumed.step()
             decision = next(record for record in records if record["kind"] == "decision")
             self.assertEqual(decision["line_number"], 2)
+        finally:
+            resumed.follower.close()
+
+    def test_flood_window_persists_across_restart(self):
+        checkpoint = self.root / "watcher.checkpoint.json"
+        settings = load_settings()
+        settings.thresholds["flood"]["request_threshold"] = 3
+        self.input.write_text(line(seconds=0) + "\n" + line(seconds=1) + "\n", encoding="utf-8")
+        first = Watcher(settings, self.input, self.output, checkpoint_path=checkpoint)
+        try:
+            self.assertFalse(any(record.get("kind") == "detection" for record in first.step()))
+        finally:
+            first.follower.close()
+
+        resumed = Watcher(settings, self.input, self.output, checkpoint_path=checkpoint)
+        try:
+            self.assertTrue(resumed.state_resumed)
+            with self.input.open("a", encoding="utf-8") as stream:
+                stream.write(line(seconds=2) + "\n")
+            records = resumed.step()
+            attacks = [record["detection"].attack_type for record in records
+                       if record["kind"] == "detection"]
+            self.assertIn("request_flood", attacks)
+        finally:
+            resumed.follower.close()
+
+    def test_lease_persists_and_idle_reconciliation_is_durable(self):
+        checkpoint = self.root / "watcher.checkpoint.json"
+        attack = "/?q=<script>+UNION+SELECT"
+        self.input.write_text(line(attack, seconds=0) + "\n", encoding="utf-8")
+        first = Watcher(load_settings(), self.input, self.output, checkpoint_path=checkpoint)
+        try:
+            records = first.step()
+            self.assertEqual(records[-1]["response"].outcome, "would_block")
+        finally:
+            first.follower.close()
+
+        resumed = Watcher(load_settings(), self.input, self.output, checkpoint_path=checkpoint)
+        try:
+            with self.input.open("a", encoding="utf-8") as stream:
+                stream.write(line(attack, seconds=1) + "\n")
+            self.assertEqual(resumed.step()[-1]["response"].outcome, "already_planned")
+            records = resumed.reconcile(datetime(2026, 1, 1, 0, 5, tzinfo=timezone.utc))
+            self.assertTrue(any(record.get("response", {}).outcome == "would_unblock"
+                                for record in records if record["kind"] == "response"))
+            self.assertTrue(any(record["kind"] == "state_reconciled" for record in records))
+        finally:
+            resumed.follower.close()
+
+        final = Watcher(load_settings(), self.input, self.output, checkpoint_path=checkpoint)
+        try:
+            self.assertEqual(final.engine.adapter.leases, {})
+            self.assertEqual(final.reconcile(datetime(2026, 1, 1, 0, 5, 1,
+                                                       tzinfo=timezone.utc)), [])
+        finally:
+            final.follower.close()
+
+    def test_legacy_checkpoint_upgrades_without_claiming_state_resume(self):
+        checkpoint = self.root / "watcher.checkpoint.json"
+        self.input.write_bytes(b"")
+        stat = self.input.stat()
+        checkpoint.write_text(json.dumps({"version": 1, "input_path": str(self.input.resolve()),
+                                          "identity": [stat.st_dev, stat.st_ino],
+                                          "offset": 0, "line_number": 0}), encoding="utf-8")
+        watcher = Watcher(load_settings(), self.input, self.output, checkpoint_path=checkpoint)
+        try:
+            self.assertTrue(watcher.resumed)
+            self.assertFalse(watcher.state_resumed)
+            self.assertEqual(watcher.step(), [])
+            self.assertEqual(json.loads(checkpoint.read_text())["version"], 2)
+        finally:
+            watcher.follower.close()
+
+    def test_invalid_engine_state_fails_closed(self):
+        checkpoint = self.root / "watcher.checkpoint.json"
+        self.input.write_text(line(seconds=0) + "\n", encoding="utf-8")
+        first = Watcher(load_settings(), self.input, self.output, checkpoint_path=checkpoint)
+        try:
+            first.step()
+        finally:
+            first.follower.close()
+        valid = json.loads(checkpoint.read_text())
+        invalid = []
+        missing = deepcopy(valid)
+        missing["engine"] = None
+        invalid.append(missing)
+        bad_address = deepcopy(valid)
+        bad_address["engine"]["adapter"]["leases"] = [["not-an-ip", "2026-01-01T00:05:00+00:00"]]
+        invalid.append(bad_address)
+        config_mismatch = deepcopy(valid)
+        config_mismatch["engine"]["flood"]["configuration"]["window_seconds"] = 999
+        invalid.append(config_mismatch)
+        policy_mismatch = deepcopy(valid)
+        policy_mismatch["engine"]["configuration"]["trusted_proxies"] = ["10.0.0.0/24"]
+        invalid.append(policy_mismatch)
+        naive_time = deepcopy(valid)
+        naive_time["engine"]["watermark"] = "2026-01-01T00:00:00"
+        invalid.append(naive_time)
+        for payload in invalid:
+            checkpoint.write_text(json.dumps(payload), encoding="utf-8")
+            with self.subTest(payload=payload), self.assertRaises(ValueError):
+                Watcher(load_settings(), self.input, self.output, checkpoint_path=checkpoint)
+
+    def test_legacy_engine_state_upgrades_with_preserved_window(self):
+        checkpoint = self.root / "watcher.checkpoint.json"
+        self.input.write_text(line(seconds=0) + "\n", encoding="utf-8")
+        first = Watcher(load_settings(), self.input, self.output, checkpoint_path=checkpoint)
+        try:
+            first.step()
+        finally:
+            first.follower.close()
+        payload = json.loads(checkpoint.read_text())
+        payload["engine"]["version"] = 1
+        payload["engine"].pop("configuration")
+        checkpoint.write_text(json.dumps(payload), encoding="utf-8")
+        resumed = Watcher(load_settings(), self.input, self.output, checkpoint_path=checkpoint)
+        try:
+            self.assertTrue(resumed.engine.state_upgraded)
+            self.assertEqual(len(resumed.engine.flood.windows["198.51.100.23"]), 1)
+            self.assertEqual(resumed.step(), [])
+            upgraded = json.loads(checkpoint.read_text())
+            self.assertEqual(upgraded["engine"]["version"], 2)
+            self.assertIn("configuration", upgraded["engine"])
+        finally:
+            resumed.follower.close()
+
+    def test_missing_checkpoint_source_resets_restored_state(self):
+        checkpoint = self.root / "watcher.checkpoint.json"
+        self.input.write_text(line(seconds=0) + "\n", encoding="utf-8")
+        first = Watcher(load_settings(), self.input, self.output, checkpoint_path=checkpoint)
+        try:
+            first.step()
+        finally:
+            first.follower.close()
+        payload = json.loads(checkpoint.read_text())
+        payload["identity"] = [0, 0]
+        payload["offset"] = 0
+        checkpoint.write_text(json.dumps(payload), encoding="utf-8")
+        resumed = Watcher(load_settings(), self.input, self.output, checkpoint_path=checkpoint)
+        try:
+            records = resumed.step()
+            self.assertIn({"kind": "state_reset", "reason": "checkpoint_source_unavailable"}, records)
+            self.assertEqual(len(resumed.engine.flood.windows["198.51.100.23"]), 1)
         finally:
             resumed.follower.close()
 

@@ -15,9 +15,11 @@ from security.response.base import AddressPolicy
 
 
 class CheckpointStore:
-    """Atomic JSON checkpoint containing metadata only, never a log payload."""
+    """Atomic log position plus bounded engine state; never stores a log payload."""
 
-    VERSION = 1
+    VERSION = 2
+    LEGACY_VERSION = 1
+    MAX_BYTES = 32 * 1024 * 1024
 
     def __init__(self, path, input_path):
         self.path = Path(path)
@@ -27,26 +29,30 @@ class CheckpointStore:
     def load(self):
         if not self.path.exists():
             return None
-        if self.path.stat().st_size > 4096:
+        if self.path.stat().st_size > self.MAX_BYTES:
             raise ValueError("Invalid watcher checkpoint")
         payload = json.loads(self.path.read_text(encoding="utf-8"))
         if not isinstance(payload, dict):
             raise ValueError("Invalid watcher checkpoint")
         identity = payload.get("identity")
         values = identity if isinstance(identity, list) else []
-        if (type(payload.get("version")) is not int or payload["version"] != self.VERSION
+        version = payload.get("version")
+        if (type(version) is not int or version not in (self.LEGACY_VERSION, self.VERSION)
                 or payload.get("input_path") != self.input_path
                 or len(values) != 2 or any(type(value) is not int or value < 0 for value in values)
                 or type(payload.get("offset")) is not int or payload["offset"] < 0
                 or type(payload.get("line_number")) is not int or payload["line_number"] < 0):
             raise ValueError("Invalid watcher checkpoint")
+        if version == self.VERSION and not isinstance(payload.get("engine"), dict):
+            raise ValueError("Invalid watcher checkpoint")
         self.path.chmod(0o600)
         self.last_payload = payload
         return payload
 
-    def save(self, identity, offset, line_number):
+    def save(self, identity, offset, line_number, engine_state):
         payload = {"version": self.VERSION, "input_path": self.input_path,
-                   "identity": list(identity), "offset": offset, "line_number": line_number}
+                   "identity": list(identity), "offset": offset, "line_number": line_number,
+                   "engine": engine_state}
         if payload == self.last_payload:
             return
         self.path.parent.mkdir(parents=True, exist_ok=True)
@@ -56,6 +62,8 @@ class CheckpointStore:
                 json.dump(payload, stream, separators=(",", ":"), sort_keys=True)
                 stream.write("\n")
                 stream.flush()
+                if os.fstat(stream.fileno()).st_size > self.MAX_BYTES:
+                    raise ValueError("Watcher checkpoint exceeds bounded size")
                 os.fsync(stream.fileno())
             os.replace(temporary, self.path)
             if os.name == "posix":
@@ -215,23 +223,50 @@ class Watcher:
             raise ValueError("Input, audit and checkpoint paths must differ")
         if poll_seconds <= 0:
             raise ValueError("Polling interval must be positive")
-        self.engine = Engine(settings)
         self.checkpoint = CheckpointStore(checkpoint_path, input_path) if checkpoint_path else None
         resume = self.checkpoint.load() if self.checkpoint else None
+        self.engine = Engine(settings)
+        self.state_resumed = bool(resume and resume.get("version") == CheckpointStore.VERSION)
+        if self.state_resumed:
+            self.engine.restore_state(resume["engine"])
         self.follower = FileFollower(input_path, settings.thresholds["max_line_bytes"], resume)
         self.audit_path = Path(audit_path)
         self.audit_path.parent.mkdir(parents=True, exist_ok=True)
         self.poll_seconds = poll_seconds
         self.lines = resume["line_number"] if resume else 0
         self.resumed = resume is not None
+        self.resume_payload = resume
         self.stop = threading.Event()
         self.error = None
+
+    def _write_records(self, records):
+        if not records:
+            return
+        with self.audit_path.open("a", encoding="utf-8") as stream:
+            for record in records:
+                write_record(stream, record)
+            stream.flush()
+            os.fsync(stream.fileno())
+
+    def _save_checkpoint(self):
+        if not self.checkpoint:
+            return
+        state = self.follower.checkpoint_state()
+        if state is None and self.resume_payload is not None:
+            state = tuple(self.resume_payload["identity"]), self.resume_payload["offset"]
+        if state is not None:
+            self.checkpoint.save(*state, self.lines, self.engine.export_state())
+            self.engine.state_upgraded = False
 
     def step(self):
         lines = self.follower.poll()
         records = []
-        for reason in self.follower.take_events():
+        source_events = self.follower.take_events()
+        for reason in source_events:
             records.append({"kind": "source_reset", "reason": reason})
+            if reason == "checkpoint_source_missing_or_truncated":
+                self.engine.reset_state()
+                records.append({"kind": "state_reset", "reason": "checkpoint_source_unavailable"})
         for raw in lines:
             self.lines += 1
             try:
@@ -242,15 +277,19 @@ class Watcher:
                 records.append({"kind": "parse_error", "line_number": self.lines, "reason": "invalid_encoding_or_size"})
             else:
                 records.extend(self.engine.process(line, self.lines))
+        self._write_records(records)
+        legacy = bool(self.checkpoint and self.checkpoint.last_payload
+                      and self.checkpoint.last_payload.get("version") == CheckpointStore.LEGACY_VERSION)
+        if (lines or source_events or (self.checkpoint and self.checkpoint.last_payload is None)
+                or legacy or self.engine.state_upgraded):
+            self._save_checkpoint()
+        return records
+
+    def reconcile(self, now=None):
+        records = self.engine.reconcile(now or datetime.now(timezone.utc))
+        self._write_records(records)
         if records:
-            with self.audit_path.open("a", encoding="utf-8") as stream:
-                for record in records:
-                    write_record(stream, record)
-                stream.flush()
-                os.fsync(stream.fileno())
-        state = self.follower.checkpoint_state()
-        if self.checkpoint and state is not None:
-            self.checkpoint.save(*state, self.lines)
+            self._save_checkpoint()
         return records
 
     def run(self):
@@ -258,11 +297,15 @@ class Watcher:
             with self.audit_path.open("a", encoding="utf-8") as stream:
                 write_record(stream, {"kind": "watch_started", "mode": "dry_run",
                                       "resume": "checkpoint" if self.resumed else "from_start",
+                                      "state_resume": ("checkpoint_upgrade" if self.engine.state_upgraded else
+                                                       "checkpoint" if self.state_resumed else
+                                                       "legacy_reset" if self.resumed else "from_start"),
                                       "timestamp": datetime.now(timezone.utc)})
                 stream.flush()
                 os.fsync(stream.fileno())
             while not self.stop.is_set():
                 self.step()
+                self.reconcile()
                 self.stop.wait(self.poll_seconds)
         except Exception as error:
             self.error = type(error).__name__  # Do not log exception contents or payloads.
@@ -276,7 +319,8 @@ def main(argv=None):
     parser.add_argument("--audit", type=Path, required=True)
     parser.add_argument("--config-dir", type=Path)
     parser.add_argument("--policy", type=Path, help="Optional complete address-policy JSON override")
-    parser.add_argument("--checkpoint", type=Path, help="Atomic metadata-only resume checkpoint")
+    parser.add_argument("--checkpoint", type=Path,
+                        help="Atomic log-position and bounded dry-run state checkpoint")
     args = parser.parse_args(argv)
     from dataclasses import replace
     try:

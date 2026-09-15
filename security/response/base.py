@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from ipaddress import ip_address, ip_network
 from typing import Protocol
 
@@ -56,8 +56,11 @@ class PreviewAdapter:
     name = "preview"
     host_firewall = False
 
-    def __init__(self, policy: AddressPolicy):
+    def __init__(self, policy: AddressPolicy, max_active_leases=10000):
+        if type(max_active_leases) is not int or max_active_leases <= 0:
+            raise ValueError("max_active_leases must be a positive integer")
         self.policy = policy
+        self.max_active_leases = max_active_leases
         self.leases: dict[str, datetime] = {}
 
     def commands(self, address: str, unblock: bool = False) -> tuple[tuple[str, ...], ...]:
@@ -80,6 +83,8 @@ class PreviewAdapter:
                 # Caller must drain expire() first; never silently discard an unblock.
                 outcome = "already_planned"
                 expires = self.leases[address]
+            elif len(self.leases) >= self.max_active_leases:
+                outcome = "lease_capacity_reached"
             else:
                 expires = decision.timestamp + timedelta(seconds=decision.block_duration_seconds)
                 self.leases[address] = expires
@@ -96,3 +101,30 @@ class PreviewAdapter:
                                               now, expires, self.commands(address, unblock=True)))
                 del self.leases[address]
         return records
+
+    def export_state(self):
+        return {"version": 1, "leases": [[address, expires.isoformat()]
+                                           for address, expires in sorted(self.leases.items())]}
+
+    def restore_state(self, payload):
+        if (not isinstance(payload, dict) or type(payload.get("version")) is not int
+                or payload["version"] != 1):
+            raise ValueError("Invalid adapter state")
+        leases = payload.get("leases")
+        if not isinstance(leases, list) or len(leases) > self.max_active_leases:
+            raise ValueError("Invalid adapter state")
+        restored = {}
+        for item in leases:
+            if not isinstance(item, list) or len(item) != 2:
+                raise ValueError("Invalid adapter state")
+            address = validated_ip(item[0])
+            if address in restored or not isinstance(item[1], str):
+                raise ValueError("Invalid adapter state")
+            try:
+                expires = datetime.fromisoformat(item[1])
+            except ValueError:
+                raise ValueError("Invalid adapter state") from None
+            if expires.tzinfo is None:
+                raise ValueError("Invalid adapter state")
+            restored[address] = expires.astimezone(timezone.utc)
+        self.leases = restored

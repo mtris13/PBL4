@@ -97,14 +97,16 @@ Redaction có thể khiến detector bỏ sót dấu hiệu nằm trong tham s�
 Nginx ở chặng 2 phải giữ quy tắc redaction, không copy raw log format vào production.
 
 Watcher theo dõi một file/một writer, giữ dòng viết dở, bỏ qua dòng quá lớn/UTF-8 lỗi.
-`lab.run` và Arch service dùng checkpoint metadata atomically để restart tiếp tục từ
-newline đã commit; checkpoint không chứa request/payload. Rename/recreate giữ inode cũ
-đến hai lần EOF ổn định trước khi chuyển file mới. Không chạy hai watcher cho cùng file;
-copytruncate và nhiều rotation quá nhanh vẫn có race. Checkpoint được ghi sau khi fsync
-audit nên crash có thể lặp ít dòng nhưng không ưu tiên bỏ mất log. Flood/lease vẫn trong
-RAM, chưa có persistent state, timer TTL lúc idle hoặc vận hành đa worker. DB SQLite hiện
-phù hợp một app instance, chưa hỗ trợ scale-out nhiều EC2. Session cookie đã ký vẫn có
-thể replay đến khi hết hạn nếu bị đánh cắp; cần session revocation/login throttling sau.
+`lab.run` và Arch service dùng checkpoint v2 nguyên tử để giữ cả vị trí newline đã commit,
+watermark, cửa sổ flood và lease dry-run. File mode 0600 chỉ chứa IP/timestamp cùng metadata
+state, không chứa request target/header/payload; checkpoint v1 tự nâng cấp với state rỗng.
+Rename/recreate giữ inode cũ đến hai lần EOF ổn định trước khi chuyển file mới. Không chạy
+hai watcher cho cùng file; copytruncate và nhiều rotation quá nhanh vẫn có race. Checkpoint
+được ghi sau khi fsync audit nên crash có thể lặp ít dòng nhưng không ưu tiên bỏ mất log.
+Watcher dọn TTL lúc idle và persist kết quả; đây chưa phải distributed state, lock đa worker
+hay reconciliation với luật firewall/WAF thật. DB SQLite hiện phù hợp một app instance,
+chưa hỗ trợ scale-out nhiều EC2. Session cookie đã ký vẫn có thể replay đến khi hết hạn nếu
+bị đánh cắp; cần session revocation/login throttling sau.
 
 App chưa có quản trị, thanh toán, gửi mail, quên mật khẩu hoặc upload. Proxy chỉ phục vụ
 loopback lab, không phải reverse proxy chống DoS production. Cần Nginx/ALB/WAF cho AWS.

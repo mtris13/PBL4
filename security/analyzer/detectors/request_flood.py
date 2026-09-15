@@ -1,5 +1,7 @@
 from collections import OrderedDict, deque
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone
+
+from security.response.base import validated_ip
 
 from security.analyzer.models import Detection
 
@@ -42,3 +44,69 @@ class RequestFloodDetector:
         return [Detection("request_flood", self.config["score"], event.source_ip,
                           "request_count_reached_configured_window_threshold", "request_flood",
                           "temporary_block", self.duration, event.timestamp)]
+
+    def expire(self, now):
+        cutoff = now - timedelta(seconds=self.config["window_seconds"])
+        removed = 0
+        for address, window in list(self.windows.items()):
+            while window and window[0] <= cutoff:
+                window.popleft()
+            if not window:
+                del self.windows[address]
+                removed += 1
+        return removed
+
+    def export_state(self):
+        return {
+            "version": 1,
+            "configuration": {
+                "enabled": self.config["enabled"],
+                "window_seconds": self.config["window_seconds"],
+                "request_threshold": self.config["request_threshold"],
+                "max_sources": self.config["max_sources"],
+            },
+            "evictions": self.evictions,
+            "windows": [[address, [timestamp.isoformat() for timestamp in window]]
+                        for address, window in self.windows.items()],
+        }
+
+    def restore_state(self, payload, watermark):
+        expected = {
+            "enabled": self.config["enabled"],
+            "window_seconds": self.config["window_seconds"],
+            "request_threshold": self.config["request_threshold"],
+            "max_sources": self.config["max_sources"],
+        }
+        if (not isinstance(payload, dict) or type(payload.get("version")) is not int
+                or payload["version"] != 1
+                or payload.get("configuration") != expected
+                or type(payload.get("evictions")) is not int or payload["evictions"] < 0):
+            raise ValueError("Invalid flood state")
+        windows = payload.get("windows")
+        if not isinstance(windows, list) or len(windows) > self.config["max_sources"]:
+            raise ValueError("Invalid flood state")
+        restored = OrderedDict()
+        for item in windows:
+            if not isinstance(item, list) or len(item) != 2:
+                raise ValueError("Invalid flood state")
+            address = validated_ip(item[0])
+            values = item[1]
+            if (address in restored or not isinstance(values, list) or not values
+                    or len(values) > self.config["request_threshold"]):
+                raise ValueError("Invalid flood state")
+            timestamps = []
+            for value in values:
+                if not isinstance(value, str):
+                    raise ValueError("Invalid flood state")
+                try:
+                    timestamp = datetime.fromisoformat(value)
+                except ValueError:
+                    raise ValueError("Invalid flood state") from None
+                if timestamp.tzinfo is None:
+                    raise ValueError("Invalid flood state")
+                timestamps.append(timestamp.astimezone(timezone.utc))
+            if timestamps != sorted(timestamps) or watermark is None or timestamps[-1] > watermark:
+                raise ValueError("Invalid flood state")
+            restored[address] = deque(timestamps, maxlen=self.config["request_threshold"])
+        self.windows = restored
+        self.evictions = payload["evictions"]

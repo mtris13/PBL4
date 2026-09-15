@@ -132,10 +132,11 @@ journalctl --user -u pbl4-shop -u pbl4-nginx -u pbl4-security -n 40 --no-pager
 ```
 
 Arch service dùng `runtime/arch/watcher.checkpoint.json`. Restart bình thường tiếp tục từ
-newline đã commit và thêm một `watch_started`; flood/lease RAM vẫn reset. Checkpoint được
-ghi sau audit nên crash ở khe giữa hai thao tác có thể lặp một số record thay vì mất log.
-Chưa có persistent lease, TTL timer lúc idle hoặc reconcile sau crash; không dùng chế độ
-này để gọi WAF thật. Copytruncate vẫn có race; ưu tiên rotate bằng rename rồi Nginx reopen.
+newline đã commit và thêm một `watch_started`. Checkpoint v2 còn giữ watermark, cửa sổ
+flood và lease dry-run; watcher reconcile TTL theo wall clock khi idle. Checkpoint được ghi
+sau audit nên crash ở khe giữa hai thao tác có thể lặp một số record thay vì mất log.
+Không dùng cơ chế local này để gọi WAF thật: chưa có distributed lock, ownership hoặc đối
+soát rule bên ngoài. Copytruncate vẫn có race; ưu tiên rotate bằng rename rồi Nginx reopen.
 
 Dừng lab:
 
@@ -209,7 +210,7 @@ Tài liệu tham chiếu: [Nginx command options](https://nginx.org/en/docs/swit
 - Clone sạch vào `/home/mtris/projects/PBL4`; local/upstream/remote HEAD cùng commit
   `2fdd004edec2f91e83b3118383dc7fca2e9ffdc6`. Danh tính Git được đặt riêng cho repo.
 - Tạo `.venv` mới trên ext4, cài `requirements-lock.txt`, `pip check` không phát hiện
-  dependency hỏng và 81/81 unittest vượt qua sau các test hồi quy bổ sung.
+  dependency hỏng và 89/89 unittest vượt qua sau các test hồi quy bổ sung.
 - `nginx -t` thành công và `systemd-analyze --user verify` không báo lỗi. Cấu hình ban
   đầu thất bại vì Nginx Arch muốn tạo `/var/lib/nginx/fastcgi`; generator đã được sửa
   để dùng đầy đủ temporary directory riêng trong `runtime/arch`.
@@ -236,6 +237,14 @@ Tài liệu tham chiếu: [Nginx command options](https://nginx.org/en/docs/swit
   `response`), checkpoint chuyển sang inode mới và offset 249. Test tự động còn kiểm tra
   dòng ghi muộn vào inode cũ, partial line qua restart và resume khi rotation xảy ra lúc
   watcher đang dừng. Copytruncate vẫn được nhận diện nhưng không tuyên bố hết race.
+- Checkpoint v1 live đã tự nâng lên v2 mode 0600 tại EOF với `state_resume=legacy_reset`.
+  Test tiếp theo gửi 10 request qua edge, checkpoint giữ cửa sổ 10; restart watcher báo
+  `state_resume=checkpoint`; thêm 10 request trong cùng cửa sổ tạo size 20 và đúng một
+  detection flood ở request thứ 20. Không có request mới, vòng idle sau đó ghi một
+  `state_reconciled` và dọn source về 0. Test tự động còn chứng minh lease giữ idempotence
+  xuyên restart, `would_unblock` được persist sau TTL, migration schema, state hỏng và
+  policy mismatch đều fail closed. Engine state live đã nâng lên v2, bind với policy và
+  adapter, báo `state_resume=checkpoint_upgrade`, vẫn ở EOF.
 - Đã đọc ruleset trước khi bật firewall. Docker 29.7.2 đang quản lý các chain NAT/FORWARD
   qua iptables-nft; không có container chạy hoặc port container được publish. Không flush
   hay sửa chain `DOCKER*`. UFW sau đó được bật với logging low, deny incoming, allow
@@ -257,8 +266,8 @@ Tài liệu tham chiếu: [Nginx command options](https://nginx.org/en/docs/swit
   25 request tiếp tục nhận diện đủ bốn loại, gồm flood; checkpoint lại đạt EOF.
 
 Chưa kiểm chứng hoặc chưa triển khai: ảnh hưởng của UFW lên container có port publish,
-persistent flood/lease/TTL/reconciliation, auth hardening còn lại, chính sách rotation
-định kỳ/retention, ALB/SG/NACL, AWS WAF hoặc tải production. Contract health check vẫn
-phải đối chiếu bằng access log target thật trên AWS. Vì vậy phần Nginx local, host firewall
-và checkpoint/rotation nền tảng đã đạt, nhưng không dùng kết quả này để tuyên bố toàn bộ
-chặng 2 hay AWS hoàn thành.
+auth hardening còn lại, chính sách rotation định kỳ/retention, multi-worker/distributed
+state, đối soát luật enforcement, ALB/SG/NACL, AWS WAF hoặc tải production. Contract health
+check vẫn phải đối chiếu bằng access log target thật trên AWS. Vì vậy phần Nginx local,
+host firewall và checkpoint/rotation/state dry-run nền tảng đã đạt, nhưng không dùng kết
+quả này để tuyên bố toàn bộ chặng 2 hay AWS hoàn thành.

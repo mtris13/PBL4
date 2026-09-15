@@ -28,7 +28,8 @@ def load_settings(directory: Path | None = None) -> Settings:
     rules = read("detection-rules.yaml")
     thresholds = read("thresholds.yaml")
     allow = read("allowlist.yaml")
-    for key in ("alert_score", "block_score", "block_duration_seconds", "max_line_bytes", "max_field_chars"):
+    for key in ("alert_score", "block_score", "block_duration_seconds", "max_active_leases",
+                "max_line_bytes", "max_field_chars"):
         _positive(thresholds[key], key)
     if thresholds["alert_score"] > thresholds["block_score"]:
         raise ValueError("alert_score must be <= block_score")

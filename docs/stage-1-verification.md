@@ -54,7 +54,9 @@ output XSS được escape và traversal không đọc được file bên ngoài
 
 ## Chưa kiểm chứng
 
-Nginx/Linux, ALB/SG/NACL thật, WAF block/unblock, TLS certificate, restart với persistent
-checkpoint/lease, scale-out, tải lớn và đánh giá false-positive trên traffic thực tế.
+ALB/SG/NACL thật, WAF block/unblock, TLS certificate, persistent state phân tán và đối soát
+rule enforcement, scale-out, tải lớn và đánh giá false-positive trên traffic thực tế.
+Checkpoint/lease local một watcher đã được kiểm chứng sau đó trên Arch; không hồi tố thành
+bằng chứng WAF hoặc multi-worker cho chặng 1 này.
 UI đã được kiểm tra response/render template qua HTTP, chưa có vòng kiểm thử tương tác
 trực tiếp bằng trình duyệt. Các mục này không được tính là đã hoàn thành chặng AWS.

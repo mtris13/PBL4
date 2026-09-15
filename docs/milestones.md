@@ -6,7 +6,7 @@ Linux và cơ chế phát hiện/phản ứng có bằng chứng thực nghiệm
 | Chặng | Đầu ra | Điều kiện xong |
 | --- | --- | --- |
 | **1. Bản local sau proxy** | Website + SQLite, proxy append XFF, access log, watcher, dry-run, test và README | Đăng ký → đăng nhập → mua hàng mô phỏng; bốn detector nhận request HTTP local; không tin XFF giả |
-| **2. Linux và vận hành security** | Nginx thật, app service, analyzer service, log redaction/rotation, checkpoint, health-check policy, login throttling/session hardening; WAF response plan | Reboot/restart có hành vi rõ ràng, log thật đúng contract; cấu hình firewall được review và kiểm thử trong lab |
+| **2. Linux và vận hành security** | Nginx thật, app service, analyzer service, log redaction/rotation, checkpoint + flood/lease state dry-run, health-check policy, login throttling/session hardening; WAF response plan | Reboot/restart có hành vi rõ ràng, log thật đúng contract; cấu hình firewall được review và kiểm thử trong lab |
 | **3. Hạ tầng AWS sau ALB** | VPC, subnet, SG, NACL, EC2, ALB, target group, health check và hướng dẫn từng bước | Website truy cập qua ALB, backend bị hạn chế truy cập trực tiếp, log xác định đúng IP client |
 | **4. Enforcement và thực nghiệm** | WAF WebACL/IP sets, adapter, IAM tối thiểu, persistent TTL, retry/reconcile; controlled tests | Có bằng chứng block/unblock thật, không block ALB/admin; kiểm tra request hợp lệ và đo độ trễ |
 | **5. Báo cáo và demo** | Sơ đồ, bảng số liệu, kịch bản demo, ảnh/log đã lọc, phân công, giới hạn, cleanup | Thành viên khác chạy được theo README và giải thích được các lớp phòng thủ |
