@@ -13,8 +13,13 @@ http {
     client_body_timeout 10s;
     client_header_timeout 10s;
     keepalive_timeout 10s;
+    types_hash_max_size 2048;
+    types_hash_bucket_size 128;
     client_body_temp_path @RUNTIME@/client_temp;
     proxy_temp_path @RUNTIME@/proxy_temp;
+    fastcgi_temp_path @RUNTIME@/fastcgi_temp;
+    scgi_temp_path @RUNTIME@/scgi_temp;
+    uwsgi_temp_path @RUNTIME@/uwsgi_temp;
     map $request_uri $pbl4_path {
         ~^(?<pbl4_original_path>[^?]*) $pbl4_original_path;
         default /;

@@ -65,9 +65,11 @@ Bộ sinh cần đường dẫn tuyệt đối Linux không chứa dấu cách/k
 .venv/bin/python -m deploy.arch.render --edge-port 9080 --origin-port 9082 --backend-port 9081
 ```
 
-Runtime nằm ở runtime/arch, permission 700; key tự sinh, permission 600. Sinh lại
-cấu hình bảo toàn key và database. Sau khi đổi đường dẫn clone phải tạo lại .venv,
-render và cài lại user units. Bộ sinh chỉ ghi file, không bật service hoặc firewall.
+Runtime nằm ở runtime/arch, permission 700; key tự sinh, permission 600. Các thư mục
+temporary của Nginx (client body, proxy, FastCGI, SCGI và uWSGI) cũng nằm trong runtime
+để user service không cần ghi vào `/var/lib/nginx`. Sinh lại cấu hình bảo toàn key và
+database. Sau khi đổi đường dẫn clone phải tạo lại .venv, render và cài lại user units.
+Bộ sinh chỉ ghi file, không bật service hoặc firewall.
 
 ## 3. Bật ba service riêng của user
 
@@ -168,8 +170,36 @@ Tài liệu tham chiếu: [Nginx command options](https://nginx.org/en/docs/swit
 [proxy_bind](https://nginx.org/en/docs/http/ngx_http_proxy_module.html#proxy_bind),
 [JSON access log](https://nginx.org/en/docs/http/ngx_http_log_module.html).
 
-## Trạng thái kiểm chứng
+## Trạng thái kiểm chứng trên Arch — 2026-09-15
 
-Code/config generator có unit test trên Windows. Chưa chạy nginx -t, systemd hoặc
-HTTP qua Nginx thật trên Arch trong phiên này. Chỉ đánh dấu 2A hoàn thành sau khi có
-kết quả các bước trên từ Arch. Chưa tạo ALB/WAF, chưa sửa firewall thực tế.
+Đã kiểm chứng thực tế trên Arch x86_64, Python 3.14.7, Nginx 1.30.4 và Git 2.55.0:
+
+- Clone sạch vào `/home/mtris/projects/PBL4`; local/upstream/remote HEAD cùng commit
+  `2fdd004edec2f91e83b3118383dc7fca2e9ffdc6`. Danh tính Git được đặt riêng cho repo.
+- Tạo `.venv` mới trên ext4, cài `requirements-lock.txt`, `pip check` không phát hiện
+  dependency hỏng và 73/73 unittest vượt qua sau các test hồi quy bổ sung.
+- `nginx -t` thành công và `systemd-analyze --user verify` không báo lỗi. Cấu hình ban
+  đầu thất bại vì Nginx Arch muốn tạo `/var/lib/nginx/fastcgi`; generator đã được sửa
+  để dùng đầy đủ temporary directory riêng trong `runtime/arch`.
+- Ba user service `pbl4-shop`, `pbl4-nginx`, `pbl4-security` đều active nhưng vẫn
+  disabled; chưa enable và chưa bật linger. Không dùng nginx system service hoặc sửa
+  `/etc/nginx/nginx.conf`.
+- Ingress `http://127.0.0.1:8080/healthz` trả 200; origin truy cập trực tiếp qua
+  `127.0.0.1:8082` trả 403; backend loopback `127.0.0.1:8081` trả 200.
+- Luồng HTTP thật đăng ký → đăng nhập → thêm giỏ → đặt đơn đã tạo một order đúng giá
+  server-side trong SQLite runtime. Giao diện catalog thật render đủ 6 sản phẩm.
+- Demo 25 request qua Nginx đạt `passed: true`: nhận diện SQLi, XSS, encoded path
+  traversal và request flood; source là `127.0.0.1`; prefix XFF giả `192.0.2.66`
+  không được chọn; loopback block bị `suppressed_protected_address`; không thực thi
+  firewall và không gọi AWS. Demo trước đó lọc sai signature cùng giây vì timestamp
+  Nginx không có microsecond; đã đổi sang đọc phần audit append sau byte offset và thêm
+  test hồi quy.
+- Restart app/watcher giữ health 200 và service trở lại active. Watcher replay access
+  log từ đầu: trong phép đo, access tăng 2 dòng nhưng audit tăng 153 dòng. Đây là giới
+  hạn đã tái hiện, chưa phải checkpoint/restart an toàn cho enforcement.
+
+Chưa kiểm chứng hoặc chưa triển khai: ruleset kernel vì phiên tự động không có sudo
+credential được cache; firewall vẫn chưa bị thay đổi. Chưa có log rotation/checkpoint,
+persistent lease/TTL/reconciliation, health-check exclusion, auth hardening, ALB/SG/NACL,
+AWS WAF hoặc tải production. Vì vậy phần Nginx local của 2A đạt, nhưng không dùng kết quả
+này để tuyên bố toàn bộ chặng 2, firewall hay AWS đã hoàn thành.

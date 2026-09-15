@@ -10,12 +10,38 @@ from pathlib import Path
 from lab.run import read_config
 
 
+def audit_offset(path):
+    """Return the start of the unfinished tail, or EOF for complete JSONL."""
+    if not path.exists():
+        return 0
+    data = path.read_bytes()
+    return data.rfind(b"\n") + 1
+
+
+def audit_records_since(path, offset):
+    if not path.exists():
+        return []
+    size = path.stat().st_size
+    with path.open("rb") as stream:
+        stream.seek(offset if size >= offset else 0)
+        data = stream.read()
+    records = []
+    for row in data.splitlines():
+        try:
+            records.append(json.loads(row))
+        except (UnicodeDecodeError, ValueError):
+            continue  # Writer may still be completing the final row.
+    return records
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description="Run 25 fixed requests against the local lab; no external target option")
     parser.add_argument("--config", type=Path, default=Path(__file__).with_name("local.json"))
     args = parser.parse_args(argv)
     config = read_config(args.config)
     started = datetime.now(timezone.utc).isoformat()
+    path = Path(config["runtime_dir"]) / "audit.jsonl"
+    start_offset = audit_offset(path)
     cases = [("benign", "/"), ("sqli", "/?q=UNION+SELECT"),
              ("xss", "/?q=%3Cscript%3Ealert(1)"),
              ("path_traversal", "/%252e%252e%252fetc/passwd")]
@@ -35,25 +61,19 @@ def main(argv=None):
     except OSError:
         print("Local lab is unavailable. Start python -m lab.run first.")
         return 2
-    path = Path(config["runtime_dir"]) / "audit.jsonl"
     deadline = time.monotonic() + 5
     detected = set()
     outcomes = set()
     sources = set()
     while time.monotonic() < deadline:
         if path.exists():
-            # Demo is for a small local file; the running watcher itself is bounded.
-            for row in path.read_text(encoding="utf-8").splitlines():
-                try:
-                    record = json.loads(row)
-                except ValueError:
-                    continue  # Writer may still be completing the final row.
+            for record in audit_records_since(path, start_offset):
                 detection = record.get("detection", {})
-                if detection.get("timestamp", "") >= started:
+                if detection:
                     detected.add(detection["attack_type"])
                     sources.add(detection["source_ip"])
                 response = record.get("response", {})
-                if response.get("timestamp", "") >= started:
+                if response:
                     outcomes.add(response["outcome"])
         if {"sqli", "xss", "path_traversal", "request_flood"} <= detected:
             break

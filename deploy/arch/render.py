@@ -62,7 +62,7 @@ def main(argv=None):
     output = project / "runtime" / "arch"
     output.mkdir(parents=True, exist_ok=True, mode=0o700)
     output.chmod(0o700)
-    for name in ("client_temp", "proxy_temp"):
+    for name in ("client_temp", "proxy_temp", "fastcgi_temp", "scgi_temp", "uwsgi_temp"):
         (output / name).mkdir(exist_ok=True, mode=0o700)
     key = output / "session.key"
     try:

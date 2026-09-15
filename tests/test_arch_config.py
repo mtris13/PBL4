@@ -30,6 +30,15 @@ class ArchConfigTests(unittest.TestCase):
 
     def test_logs_and_units(self):
         files = build_files("/home/student/PBL4")
+        temp_paths = {
+            "client_body_temp_path": "client_temp",
+            "proxy_temp_path": "proxy_temp",
+            "fastcgi_temp_path": "fastcgi_temp",
+            "scgi_temp_path": "scgi_temp",
+            "uwsgi_temp_path": "uwsgi_temp",
+        }
+        for directive, directory in temp_paths.items():
+            self.assertIn(f"{directive} /home/student/PBL4/runtime/arch/{directory};", files["nginx.conf"])
         for field in ("$request_body", "$http_cookie", "$http_authorization", "$args"):
             self.assertNotIn(field, files["nginx.conf"])
         self.assertIn("escape=json", files["nginx.conf"])
