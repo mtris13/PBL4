@@ -162,9 +162,40 @@ sudo iptables -S
 sudo ip6tables -S
 ```
 
-Chưa chạy ufw enable/reset, iptables -F hoặc thay default policy. Sẽ chọn một công cụ
-quản lý firewall và lập luật sau khi xem kết quả; không bật chồng UFW/nftables độc lập.
-Linux firewall bảo vệ host/cổng; phương án HTTP sau ALB vẫn dùng WAF ở chặng sau.
+Ruleset phải được review trước khi bật hoặc đổi firewall; không dùng `ufw reset`,
+`iptables -F` hay sửa chain Docker. Sau lần review ngày 2026-09-15, UFW được chọn làm
+công cụ quản lý host firewall và bật với default deny incoming. Không bật chồng một
+nftables service độc lập. Linux firewall bảo vệ host/cổng; phương án HTTP sau ALB vẫn
+dùng WAF ở chặng sau.
+
+### Kiểm thử UFW cô lập ở chặng 2B
+
+Sau khi đã review ruleset và bật UFW với default deny incoming, chạy script từ tài khoản
+user thường. Script cần sudo để tạo network namespace/veth và thêm rồi xóa một rule UFW
+tạm thời:
+
+```bash
+sudo bash deploy/arch/firewall_lab.sh
+```
+
+Script dùng mạng benchmark `198.18.0.0/30`, interface và namespace có tên cố định, đồng
+thời từ chối chạy nếu các tài nguyên đó đã tồn tại. Một HTTP server tạm chỉ bind địa chỉ
+veth `198.18.0.1:19080`; không bind Wi-Fi hoặc các port PBL4. Ba bước kỳ vọng là deny
+trước rule, allow đúng peer/port sau rule và deny lại sau khi xóa rule. `trap` dọn rule,
+process, namespace, veth và file tạm khi thành công, lỗi hoặc bị ngắt. Script không flush
+ruleset, không sửa chain Docker và không gửi request ra ngoài máy.
+
+Sau khi chạy, kiểm tra không còn tài nguyên lab:
+
+```bash
+sudo ufw status verbose
+sudo ip netns list
+ip link show pbl4fw-host
+```
+
+`ip link` phải báo interface không tồn tại; namespace `pbl4-fw-client` và rule có comment
+`PBL4 temporary firewall lab` không được còn lại. Nếu script báo không xóa được rule,
+dùng `sudo ufw status numbered` để review chính xác trước khi xóa, không dùng `ufw reset`.
 
 Tài liệu tham chiếu: [Nginx command options](https://nginx.org/en/docs/switches.html),
 [proxy_bind](https://nginx.org/en/docs/http/ngx_http_proxy_module.html#proxy_bind),
@@ -201,15 +232,21 @@ Tài liệu tham chiếu: [Nginx command options](https://nginx.org/en/docs/swit
   qua iptables-nft; không có container chạy hoặc port container được publish. Không flush
   hay sửa chain `DOCKER*`. UFW sau đó được bật với logging low, deny incoming, allow
   outgoing, deny routed và IPv6; INPUT policy thực tế là DROP cho cả IPv4/IPv6. Website
-  loopback vẫn trả 200 và origin trực tiếp vẫn trả 403. Chưa kiểm thử deny từ peer mạng
-  ngoài nên không dùng kết quả loopback làm bằng chứng packet bị firewall drop.
+  loopback vẫn trả 200 và origin trực tiếp vẫn trả 403.
+- Script `deploy/arch/firewall_lab.sh` đã chạy thật bằng sudo với network namespace ngày
+  2026-09-15. Kết quả đủ ba pha: peer cô lập bị deny trước rule, được allow đúng IP/port
+  bởi rule tạm, rồi bị deny lại sau khi xóa rule (`RESULT: PASS`). Script cũng xác nhận
+  UFW còn active và chain `DOCKER-USER` vẫn tồn tại trước khi báo pass. Sau cleanup không
+  còn namespace `pbl4-fw-client`, interface `pbl4fw-host`, listener TCP 19080 hoặc rule
+  tạm trong file cấu hình UFW. Đây là bằng chứng INPUT allow/deny trên host; không phải
+  bằng chứng UFW bảo vệ port do Docker publish và không liên quan nhận diện HTTP/XFF.
 - `/healthz` ban đầu phát session cookie vì hook CSRF chạy trên mọi request. Endpoint đã
   được tách khỏi việc đọc/tạo session và có test xác nhận health response không còn
   `Set-Cookie`; đây là hardening health check cho ALB, chưa phải policy loại health traffic
   khỏi flood detector.
 
-Chưa kiểm chứng hoặc chưa triển khai: phép thử firewall allow/deny từ peer mạng ngoài,
-ảnh hưởng của UFW lên container có port publish, log rotation/checkpoint, persistent
-lease/TTL/reconciliation, health-check exclusion trong analyzer, auth hardening còn lại,
-ALB/SG/NACL, AWS WAF hoặc tải production. Vì vậy phần Nginx local và host firewall nền
-tảng đã đạt, nhưng không dùng kết quả này để tuyên bố toàn bộ chặng 2 hay AWS hoàn thành.
+Chưa kiểm chứng hoặc chưa triển khai: ảnh hưởng của UFW lên container có port publish,
+log rotation/checkpoint, persistent lease/TTL/reconciliation, health-check exclusion
+trong analyzer, auth hardening còn lại, ALB/SG/NACL, AWS WAF hoặc tải production. Vì vậy
+phần Nginx local và host firewall nền tảng đã đạt, nhưng không dùng kết quả này để tuyên
+bố toàn bộ chặng 2 hay AWS hoàn thành.
