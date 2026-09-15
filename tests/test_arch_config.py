@@ -48,6 +48,8 @@ class ArchConfigTests(unittest.TestCase):
                 self.assertIn("WantedBy=default.target", text)
                 self.assertNotIn("User=root", text)
                 self.assertNotIn("sudo", text)
+        self.assertIn("--checkpoint /home/student/PBL4/runtime/arch/watcher.checkpoint.json",
+                      files["pbl4-security.service"])
 
     def test_standalone_server(self):
         with TemporaryDirectory() as directory:

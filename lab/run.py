@@ -42,7 +42,7 @@ class LocalLab:
                           "DATABASE": str(self.runtime / "shop.sqlite3"), "SESSION_COOKIE_SECURE": False})
         settings = replace(load_settings(), policy=AddressPolicy(trusted_proxies=config["trusted_proxies"]))
         self.watcher = Watcher(settings, self.runtime / "access.jsonl", self.runtime / "audit.jsonl",
-                               config["poll_seconds"])
+                               config["poll_seconds"], self.runtime / "watcher.checkpoint.json")
         self.backend = create_server(AccessLogMiddleware(app, self.runtime / "access.jsonl"),
                                      host="127.0.0.1", port=config["backend_port"], threads=4,
                                      max_request_body_size=16384,

@@ -44,7 +44,7 @@ def build_files(project, edge_port=8080, origin_port=8082, backend_port=8081):
                                     f"ExecStartPre=/usr/bin/nginx -t -p {runtime}/ -c {runtime}/nginx.conf\nKillSignal=SIGQUIT",
                                     "Wants=pbl4-shop.service\nAfter=pbl4-shop.service"),
         "pbl4-security.service": unit("PBL4 security watcher dry-run",
-                                       f"{python} -m security.scripts.watch --input {runtime}/access.jsonl --audit {runtime}/audit.jsonl --policy {runtime}/policy.json",
+                                       f"{python} -m security.scripts.watch --input {runtime}/access.jsonl --audit {runtime}/audit.jsonl --checkpoint {runtime}/watcher.checkpoint.json --policy {runtime}/policy.json",
                                        dependencies="Wants=pbl4-nginx.service\nAfter=pbl4-nginx.service"),
     }
 

@@ -7,8 +7,11 @@ website đang chạy hay dependency bên ngoài. Môi trường phát triển hi
 **Cập nhật chặng local:** core đã được chạy lại trên Python 3.12.14. Website và proxy
 local hiện có ở README gốc. `python -m security.scripts.watch --input LOG --audit AUDIT`
 đọc log liên tục ở chế độ dry-run; có thể truyền `--config-dir` và `--policy` (JSON đầy
-đủ các nhóm địa chỉ). Watcher chưa có checkpoint bền vững, restart replay từ đầu;
-rotation cơ bản có thể mất dòng chưa đọc. Không dùng để enforcement production.
+đủ các nhóm địa chỉ). Truyền thêm `--checkpoint STATE.json` để resume bằng metadata
+device/inode/offset/line number; không có cờ này thì watcher vẫn đọc từ đầu. Checkpoint
+được replace atomically sau khi audit đã flush+fsync. Rename/recreate drain inode cũ qua
+hai lần EOF ổn định; copytruncate và rotation liên tiếp quá nhanh vẫn có race. Engine
+flood/lease chưa persistent, vì vậy chưa dùng watcher này để enforcement production.
 
 **Mọi response đều là dry-run hoặc preview. Không có code thực thi firewall,
 không gọi AWS, không gửi request tấn công.** Sample dùng địa chỉ IP dành cho tài liệu.
@@ -30,7 +33,8 @@ Lưu audit nếu cần:
 python -m security.scripts.analyze --input security/tests/sample_logs/mixed.jsonl > security/logging/demo-audit.jsonl
 ```
 
-CLI nhận `--input`, `--config-dir`, `--adapter dry-run|ufw|iptables|aws-waf`.
+Analyzer CLI nhận `--input`, `--config-dir`, `--adapter dry-run|ufw|iptables|aws-waf`.
+Watcher CLI nhận `--input`, `--audit`, tùy chọn `--checkpoint`, `--config-dir`, `--policy`.
 Không có cờ execute. Exit code 0 nghĩa là đã đọc xong stream, kể cả khi có dòng lỗi;
 xem `summary.invalid_lines` để biết log bị bỏ qua. Exit code 2 cho lỗi input/config.
 Đường dẫn input không nằm trong mã detector. Config mặc định được tìm tương đối theo

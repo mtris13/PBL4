@@ -53,9 +53,119 @@ class LiveLogTests(unittest.TestCase):
         self.assertEqual(records[0]["kind"], "source_reset")
         self.assertEqual(records[1]["kind"], "parse_error")
 
+    def test_checkpoint_restart_skips_committed_lines(self):
+        checkpoint = self.root / "watcher.checkpoint.json"
+        self.input.write_text(line("/?q=union+select") + "\n", encoding="utf-8")
+        first = Watcher(load_settings(), self.input, self.output, checkpoint_path=checkpoint)
+        try:
+            self.assertTrue(first.step())
+            self.assertEqual(first.lines, 1)
+        finally:
+            first.follower.close()
+        payload = json.loads(checkpoint.read_text(encoding="utf-8"))
+        self.assertEqual(payload["offset"], self.input.stat().st_size)
+        self.assertEqual(payload["line_number"], 1)
+        self.assertNotIn("union", checkpoint.read_text(encoding="utf-8").lower())
+        self.assertEqual(checkpoint.stat().st_mode & 0o777, 0o600)
+
+        checkpoint.chmod(0o644)
+        resumed = Watcher(load_settings(), self.input, self.output, checkpoint_path=checkpoint)
+        try:
+            self.assertTrue(resumed.resumed)
+            self.assertEqual(checkpoint.stat().st_mode & 0o777, 0o600)
+            self.assertEqual(resumed.lines, 1)
+            self.assertEqual(resumed.step(), [])
+            with self.input.open("a", encoding="utf-8") as stream:
+                stream.write(line(seconds=1) + "\n")
+            records = resumed.step()
+            decision = next(record for record in records if record["kind"] == "decision")
+            self.assertEqual(decision["line_number"], 2)
+        finally:
+            resumed.follower.close()
+
+    def test_checkpoint_does_not_skip_an_unfinished_line(self):
+        checkpoint = self.root / "watcher.checkpoint.json"
+        raw = line(seconds=1).encode()
+        self.input.write_bytes(raw)
+        first = Watcher(load_settings(), self.input, self.output, checkpoint_path=checkpoint)
+        try:
+            self.assertEqual(first.step(), [])
+        finally:
+            first.follower.close()
+        self.assertEqual(json.loads(checkpoint.read_text())["offset"], 0)
+        with self.input.open("ab") as stream:
+            stream.write(b"\n")
+        resumed = Watcher(load_settings(), self.input, self.output, checkpoint_path=checkpoint)
+        try:
+            records = resumed.step()
+            self.assertEqual(sum(record["kind"] == "decision" for record in records), 1)
+            self.assertEqual(resumed.lines, 1)
+        finally:
+            resumed.follower.close()
+
+    def test_rename_rotation_drains_old_inode_before_new_file(self):
+        rotated = self.root / "access.jsonl.1"
+        self.input.write_text(line(seconds=0) + "\n", encoding="utf-8")
+        self.watcher.step()
+        self.input.rename(rotated)
+        self.input.write_text(line(seconds=2) + "\n", encoding="utf-8")
+
+        self.assertEqual(self.watcher.step(), [])
+        with rotated.open("a", encoding="utf-8") as stream:
+            stream.write(line(seconds=1) + "\n")
+        late_records = self.watcher.step()
+        late_decision = next(record for record in late_records if record["kind"] == "decision")
+        self.assertEqual(late_decision["line_number"], 2)
+        self.assertEqual(self.watcher.step(), [])
+        new_records = self.watcher.step()
+        self.assertEqual(new_records[0], {"kind": "source_reset", "reason": "rename_recreate"})
+        new_decision = next(record for record in new_records if record["kind"] == "decision")
+        self.assertEqual(new_decision["line_number"], 3)
+
+    def test_checkpoint_finds_a_rotated_inode_after_restart(self):
+        checkpoint = self.root / "watcher.checkpoint.json"
+        rotated = self.root / "access.jsonl.1"
+        self.input.write_text(line(seconds=0) + "\n", encoding="utf-8")
+        first = Watcher(load_settings(), self.input, self.output, checkpoint_path=checkpoint)
+        try:
+            first.step()
+        finally:
+            first.follower.close()
+        self.input.rename(rotated)
+        with rotated.open("a", encoding="utf-8") as stream:
+            stream.write(line(seconds=1) + "\n")
+        self.input.write_text(line(seconds=2) + "\n", encoding="utf-8")
+
+        resumed = Watcher(load_settings(), self.input, self.output, checkpoint_path=checkpoint)
+        try:
+            late_records = resumed.step()
+            late_decision = next(record for record in late_records if record["kind"] == "decision")
+            self.assertEqual(late_decision["line_number"], 2)
+            self.assertEqual(resumed.step(), [])
+            new_records = resumed.step()
+            self.assertEqual(new_records[0], {"kind": "source_reset", "reason": "rename_recreate"})
+            new_decision = next(record for record in new_records if record["kind"] == "decision")
+            self.assertEqual(new_decision["line_number"], 3)
+        finally:
+            resumed.follower.close()
+
+    def test_invalid_or_rebound_checkpoint_fails_closed(self):
+        checkpoint = self.root / "watcher.checkpoint.json"
+        for invalid in ("{}", "[]", '{"version":true}'):
+            checkpoint.write_text(invalid, encoding="utf-8")
+            with self.subTest(invalid=invalid), self.assertRaises(ValueError):
+                Watcher(load_settings(), self.input, self.output, checkpoint_path=checkpoint)
+        checkpoint.write_text(json.dumps({"version": 1, "input_path": "/different/input",
+                                          "identity": [1, 2], "offset": 0, "line_number": 0}),
+                              encoding="utf-8")
+        with self.assertRaises(ValueError):
+            Watcher(load_settings(), self.input, self.output, checkpoint_path=checkpoint)
+
     def test_reject_same_input_output(self):
         with self.assertRaises(ValueError):
             Watcher(load_settings(), self.input, self.input)
+        with self.assertRaises(ValueError):
+            Watcher(load_settings(), self.input, self.output, checkpoint_path=self.input)
 
     def test_redaction(self):
         target = redact_target("/?q=book&password=secret&access_token=secret&secret=secret&category=desk")

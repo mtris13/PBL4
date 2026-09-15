@@ -131,10 +131,11 @@ curl -i http://127.0.0.1:8080/healthz
 journalctl --user -u pbl4-shop -u pbl4-nginx -u pbl4-security -n 40 --no-pager
 ```
 
-Watcher hiện replay từ đầu khi restart: audit có thể lặp, flood/lease RAM được reset.
-Chưa có checkpoint bền vững, TTL timer lúc idle hoặc reconcile sau crash; không dùng
-chế độ này để gọi WAF thật. Sau khi xác nhận Nginx hoạt động, bước 2B sẽ xử lý các mục
-này cùng login throttling, session hardening, rotation và health-check exclusion.
+Arch service dùng `runtime/arch/watcher.checkpoint.json`. Restart bình thường tiếp tục từ
+newline đã commit và thêm một `watch_started`; flood/lease RAM vẫn reset. Checkpoint được
+ghi sau audit nên crash ở khe giữa hai thao tác có thể lặp một số record thay vì mất log.
+Chưa có persistent lease, TTL timer lúc idle hoặc reconcile sau crash; không dùng chế độ
+này để gọi WAF thật. Copytruncate vẫn có race; ưu tiên rotate bằng rename rồi Nginx reopen.
 
 Dừng lab:
 
@@ -208,7 +209,7 @@ Tài liệu tham chiếu: [Nginx command options](https://nginx.org/en/docs/swit
 - Clone sạch vào `/home/mtris/projects/PBL4`; local/upstream/remote HEAD cùng commit
   `2fdd004edec2f91e83b3118383dc7fca2e9ffdc6`. Danh tính Git được đặt riêng cho repo.
 - Tạo `.venv` mới trên ext4, cài `requirements-lock.txt`, `pip check` không phát hiện
-  dependency hỏng và 73/73 unittest vượt qua sau các test hồi quy bổ sung.
+  dependency hỏng và 78/78 unittest vượt qua sau các test hồi quy bổ sung.
 - `nginx -t` thành công và `systemd-analyze --user verify` không báo lỗi. Cấu hình ban
   đầu thất bại vì Nginx Arch muốn tạo `/var/lib/nginx/fastcgi`; generator đã được sửa
   để dùng đầy đủ temporary directory riêng trong `runtime/arch`.
@@ -225,9 +226,16 @@ Tài liệu tham chiếu: [Nginx command options](https://nginx.org/en/docs/swit
   firewall và không gọi AWS. Demo trước đó lọc sai signature cùng giây vì timestamp
   Nginx không có microsecond; đã đổi sang đọc phần audit append sau byte offset và thêm
   test hồi quy.
-- Restart app/watcher giữ health 200 và service trở lại active. Watcher replay access
-  log từ đầu: trong phép đo, access tăng 2 dòng nhưng audit tăng 153 dòng. Đây là giới
-  hạn đã tái hiện, chưa phải checkpoint/restart an toàn cho enforcement.
+- Trước khi có checkpoint, restart app/watcher từng làm audit tăng 153 dòng khi access
+  chỉ tăng 2 dòng. Sau nâng cấp 2B, lần migration đầu replay 102 dòng cũ một lần và tạo
+  checkpoint mode 0600 tại EOF. Restart security lần hai chỉ thêm đúng một record
+  `watch_started` với `resume=checkpoint`, không xử lý lại request cũ. Checkpoint chỉ lưu
+  version/input path/device/inode/offset/line number, không chứa payload.
+- Rotation Nginx thật bằng rename + reopen đã đổi inode, giữ lại file cũ 102 dòng và ghi
+  request mới thành line 103. Audit tăng đúng ba record (`source_reset`, `decision`,
+  `response`), checkpoint chuyển sang inode mới và offset 249. Test tự động còn kiểm tra
+  dòng ghi muộn vào inode cũ, partial line qua restart và resume khi rotation xảy ra lúc
+  watcher đang dừng. Copytruncate vẫn được nhận diện nhưng không tuyên bố hết race.
 - Đã đọc ruleset trước khi bật firewall. Docker 29.7.2 đang quản lý các chain NAT/FORWARD
   qua iptables-nft; không có container chạy hoặc port container được publish. Không flush
   hay sửa chain `DOCKER*`. UFW sau đó được bật với logging low, deny incoming, allow
@@ -246,7 +254,7 @@ Tài liệu tham chiếu: [Nginx command options](https://nginx.org/en/docs/swit
   khỏi flood detector.
 
 Chưa kiểm chứng hoặc chưa triển khai: ảnh hưởng của UFW lên container có port publish,
-log rotation/checkpoint, persistent lease/TTL/reconciliation, health-check exclusion
-trong analyzer, auth hardening còn lại, ALB/SG/NACL, AWS WAF hoặc tải production. Vì vậy
-phần Nginx local và host firewall nền tảng đã đạt, nhưng không dùng kết quả này để tuyên
-bố toàn bộ chặng 2 hay AWS hoàn thành.
+persistent flood/lease/TTL/reconciliation, health-check exclusion trong analyzer, auth
+hardening còn lại, chính sách rotation định kỳ/retention, ALB/SG/NACL, AWS WAF hoặc tải
+production. Vì vậy phần Nginx local, host firewall và checkpoint/rotation nền tảng đã đạt,
+nhưng không dùng kết quả này để tuyên bố toàn bộ chặng 2 hay AWS hoàn thành.
