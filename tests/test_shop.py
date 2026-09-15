@@ -40,7 +40,9 @@ class ShopTests(unittest.TestCase):
         self.assertIn("Bàn phím Pebble", self.client.get("/").get_data(as_text=True))
         self.assertEqual(self.client.get("/products/1").status_code, 200)
         self.assertEqual(self.client.get("/products/999").status_code, 404)
-        self.assertEqual(self.client.get("/healthz").json, {"status": "ok"})
+        health = self.app.test_client().get("/healthz")
+        self.assertEqual(health.json, {"status": "ok"})
+        self.assertNotIn("Set-Cookie", health.headers)
 
     def test_register_hash_login_logout(self):
         self.account()

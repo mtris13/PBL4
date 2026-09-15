@@ -46,6 +46,9 @@ def create_app(config=None):
     @app.before_request
     def load_user_and_csrf():
         # No ProxyFix: forwarded headers never change identity/host/scheme in the app.
+        # Health checks must not create or refresh browser sessions at the ALB boundary.
+        if request.endpoint == "health":
+            return
         g.user = get_db().execute("SELECT id, name, email FROM users WHERE id = ?",
                                  (session.get("user_id"),)).fetchone()
         if "csrf" not in session:

@@ -197,9 +197,19 @@ Tài liệu tham chiếu: [Nginx command options](https://nginx.org/en/docs/swit
 - Restart app/watcher giữ health 200 và service trở lại active. Watcher replay access
   log từ đầu: trong phép đo, access tăng 2 dòng nhưng audit tăng 153 dòng. Đây là giới
   hạn đã tái hiện, chưa phải checkpoint/restart an toàn cho enforcement.
+- Đã đọc ruleset trước khi bật firewall. Docker 29.7.2 đang quản lý các chain NAT/FORWARD
+  qua iptables-nft; không có container chạy hoặc port container được publish. Không flush
+  hay sửa chain `DOCKER*`. UFW sau đó được bật với logging low, deny incoming, allow
+  outgoing, deny routed và IPv6; INPUT policy thực tế là DROP cho cả IPv4/IPv6. Website
+  loopback vẫn trả 200 và origin trực tiếp vẫn trả 403. Chưa kiểm thử deny từ peer mạng
+  ngoài nên không dùng kết quả loopback làm bằng chứng packet bị firewall drop.
+- `/healthz` ban đầu phát session cookie vì hook CSRF chạy trên mọi request. Endpoint đã
+  được tách khỏi việc đọc/tạo session và có test xác nhận health response không còn
+  `Set-Cookie`; đây là hardening health check cho ALB, chưa phải policy loại health traffic
+  khỏi flood detector.
 
-Chưa kiểm chứng hoặc chưa triển khai: ruleset kernel vì phiên tự động không có sudo
-credential được cache; firewall vẫn chưa bị thay đổi. Chưa có log rotation/checkpoint,
-persistent lease/TTL/reconciliation, health-check exclusion, auth hardening, ALB/SG/NACL,
-AWS WAF hoặc tải production. Vì vậy phần Nginx local của 2A đạt, nhưng không dùng kết quả
-này để tuyên bố toàn bộ chặng 2, firewall hay AWS đã hoàn thành.
+Chưa kiểm chứng hoặc chưa triển khai: phép thử firewall allow/deny từ peer mạng ngoài,
+ảnh hưởng của UFW lên container có port publish, log rotation/checkpoint, persistent
+lease/TTL/reconciliation, health-check exclusion trong analyzer, auth hardening còn lại,
+ALB/SG/NACL, AWS WAF hoặc tải production. Vì vậy phần Nginx local và host firewall nền
+tảng đã đạt, nhưng không dùng kết quả này để tuyên bố toàn bộ chặng 2 hay AWS hoàn thành.
