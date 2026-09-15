@@ -47,8 +47,9 @@ Như vậy bài báo cáo vẫn có tìm hiểu và xây dựng firewall Linux, 
    khỏi flood khi peer thuộc `trusted_proxies` và request không có XFF; audit ghi
    `policy_skip`. Client qua ALB có XFF vẫn bị tính. Không dùng User-Agent hay header
    client tùy ý để bỏ qua; phải đối chiếu access log target thật khi triển khai AWS.
-8. HTTPS termination/certificate, host allowlist và cookie Secure được hoàn thiện trước
-   khi dùng tài khoản thật. Local HTTP ở chặng 1 chỉ là ngoại lệ trong loopback lab.
+8. App production-mode đã đặt cookie Secure và HSTS; local HTTP tắt cả hai có chủ ý.
+   Vẫn phải triển khai HTTPS termination/certificate thật tại ALB trước khi dùng tài khoản
+   thật. Host allowlist giữ nguyên; không tin forwarded host/scheme trong Flask.
 
 AWS hướng dẫn [giới hạn traffic target bằng SG nguồn của ALB](https://docs.aws.amazon.com/elasticloadbalancing/latest/application/load-balancer-update-security-groups.html).
 ALB có các [chế độ XFF append/preserve/remove và tùy chọn client port](https://docs.aws.amazon.com/elasticloadbalancing/latest/application/x-forwarded-headers.html).

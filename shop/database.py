@@ -1,3 +1,4 @@
+import os
 import sqlite3
 from contextlib import closing
 from pathlib import Path
@@ -46,6 +47,22 @@ CREATE TABLE IF NOT EXISTS order_items (
   name TEXT NOT NULL, price INTEGER NOT NULL, quantity INTEGER NOT NULL,
   PRIMARY KEY(order_id, product_id)
 );
+CREATE TABLE IF NOT EXISTS login_throttle (
+  identity_hash TEXT PRIMARY KEY CHECK(length(identity_hash) = 64),
+  failures INTEGER NOT NULL CHECK(failures > 0),
+  window_started INTEGER NOT NULL,
+  blocked_until INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS login_throttle_updated ON login_throttle(updated_at);
+CREATE TABLE IF NOT EXISTS browser_sessions (
+  token_hash TEXT PRIMARY KEY CHECK(length(token_hash) = 64),
+  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  created_at INTEGER NOT NULL,
+  expires_at INTEGER NOT NULL CHECK(expires_at > created_at)
+);
+CREATE INDEX IF NOT EXISTS browser_sessions_user_created
+  ON browser_sessions(user_id, created_at DESC);
 """
 
 
@@ -57,10 +74,13 @@ def connect(path):
 
 
 def initialize(path):
-    Path(path).parent.mkdir(parents=True, exist_ok=True)
+    database_path = Path(path)
+    database_path.parent.mkdir(parents=True, exist_ok=True)
     with closing(connect(path)) as db, db:
         db.executescript(SCHEMA)
         db.executemany("INSERT OR IGNORE INTO products VALUES (?, ?, ?, ?, ?, ?, ?)", PRODUCTS)
+    if os.name == "posix":
+        database_path.chmod(0o600)
 
 
 def get_db():

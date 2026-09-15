@@ -210,7 +210,7 @@ Tài liệu tham chiếu: [Nginx command options](https://nginx.org/en/docs/swit
 - Clone sạch vào `/home/mtris/projects/PBL4`; local/upstream/remote HEAD cùng commit
   `2fdd004edec2f91e83b3118383dc7fca2e9ffdc6`. Danh tính Git được đặt riêng cho repo.
 - Tạo `.venv` mới trên ext4, cài `requirements-lock.txt`, `pip check` không phát hiện
-  dependency hỏng và 89/89 unittest vượt qua sau các test hồi quy bổ sung.
+  dependency hỏng và 95/95 unittest vượt qua sau các test hồi quy bổ sung.
 - `nginx -t` thành công và `systemd-analyze --user verify` không báo lỗi. Cấu hình ban
   đầu thất bại vì Nginx Arch muốn tạo `/var/lib/nginx/fastcgi`; generator đã được sửa
   để dùng đầy đủ temporary directory riêng trong `runtime/arch`.
@@ -230,8 +230,8 @@ Tài liệu tham chiếu: [Nginx command options](https://nginx.org/en/docs/swit
 - Trước khi có checkpoint, restart app/watcher từng làm audit tăng 153 dòng khi access
   chỉ tăng 2 dòng. Sau nâng cấp 2B, lần migration đầu replay 102 dòng cũ một lần và tạo
   checkpoint mode 0600 tại EOF. Restart security lần hai chỉ thêm đúng một record
-  `watch_started` với `resume=checkpoint`, không xử lý lại request cũ. Checkpoint chỉ lưu
-  version/input path/device/inode/offset/line number, không chứa payload.
+  `watch_started` với `resume=checkpoint`, không xử lý lại request cũ. Checkpoint v1 khi
+  đó chỉ lưu version/input path/device/inode/offset/line number, không chứa payload.
 - Rotation Nginx thật bằng rename + reopen đã đổi inode, giữ lại file cũ 102 dòng và ghi
   request mới thành line 103. Audit tăng đúng ba record (`source_reset`, `decision`,
   `response`), checkpoint chuyển sang inode mới và offset 249. Test tự động còn kiểm tra
@@ -264,10 +264,18 @@ Tài liệu tham chiếu: [Nginx command options](https://nginx.org/en/docs/swit
   Test Nginx thật gửi 25 request từ `127.0.0.2` tạo đúng 25 `policy_skip`, không có
   `request_flood`, và checkpoint đạt EOF. Client qua edge có XFF vẫn được tính và demo
   25 request tiếp tục nhận diện đủ bốn loại, gồm flood; checkpoint lại đạt EOF.
+- SQLite live đã migration thêm `login_throttle` và `browser_sessions` mà giữ nguyên user,
+  order cũ; database mode 0600. Test HTTP qua Nginx tạo account lab: bốn mật khẩu sai đầu
+  trả 401, restart `pbl4-shop`, lần thứ năm trả 429 với `Retry-After: 900`; mật khẩu đúng
+  trong thời gian khóa cũng trả 429. Account lab thứ hai login/logout đều 303, sau logout
+  DB còn 0 browser session và replay cookie cũ vào `/cart` bị redirect 302. Throttle chỉ
+  lưu HMAC identity, session DB chỉ lưu HMAC token. Local HTTP không phát HSTS/Secure;
+  production-mode test xác nhận cả hai bật và session không refresh theo mỗi request.
 
 Chưa kiểm chứng hoặc chưa triển khai: ảnh hưởng của UFW lên container có port publish,
-auth hardening còn lại, chính sách rotation định kỳ/retention, multi-worker/distributed
-state, đối soát luật enforcement, ALB/SG/NACL, AWS WAF hoặc tải production. Contract health
-check vẫn phải đối chiếu bằng access log target thật trên AWS. Vì vậy phần Nginx local,
-host firewall và checkpoint/rotation/state dry-run nền tảng đã đạt, nhưng không dùng kết
-quả này để tuyên bố toàn bộ chặng 2 hay AWS hoàn thành.
+email verification/password reset/MFA, rate limit client-IP ở ingress, chính sách rotation
+định kỳ/retention, multi-worker/distributed state, đối soát luật enforcement, ALB/SG/NACL,
+AWS WAF hoặc tải production. Contract health check vẫn phải đối chiếu bằng access log target
+thật trên AWS. Vì vậy phần Nginx local, host firewall, auth và checkpoint/rotation/state
+dry-run nền tảng đã đạt, nhưng không dùng kết quả này để tuyên bố toàn bộ chặng 2 hay AWS
+hoàn thành.

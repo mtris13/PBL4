@@ -1,6 +1,8 @@
+import os
 import sqlite3
 import unittest
 from contextlib import closing
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
@@ -12,7 +14,8 @@ class ShopTests(unittest.TestCase):
         self.temp = TemporaryDirectory()
         self.path = str(Path(self.temp.name) / "shop.sqlite3")
         self.app = create_app({"TESTING": True, "SECRET_KEY": "test-secret-" * 4,
-                               "DATABASE": self.path, "SESSION_COOKIE_SECURE": False})
+                               "DATABASE": self.path, "SESSION_COOKIE_SECURE": False,
+                               "ENABLE_HSTS": False})
         self.client = self.app.test_client()
 
     def tearDown(self):
@@ -74,6 +77,134 @@ class ShopTests(unittest.TestCase):
         with self.client.session_transaction() as session:
             self.assertNotEqual(session["csrf"], before)
 
+    def test_login_throttle_persists_and_does_not_store_attempted_email(self):
+        clock = [datetime(2026, 9, 15, 12, 0, tzinfo=timezone.utc)]
+        self.app.config.update(AUTH_CLOCK=lambda: clock[0], LOGIN_FAILURE_LIMIT=3,
+                               LOGIN_WINDOW_SECONDS=120, LOGIN_BLOCK_SECONDS=60)
+        self.account()
+        self.post("/logout")
+        for _ in range(2):
+            response = self.post("/login", {"email": "student@example.test",
+                                             "password": "wrong-password"})
+            self.assertEqual(response.status_code, 401)
+
+        restarted = create_app({"TESTING": True, "SECRET_KEY": "test-secret-" * 4,
+                                "DATABASE": self.path, "SESSION_COOKIE_SECURE": False,
+                                "AUTH_CLOCK": lambda: clock[0], "LOGIN_FAILURE_LIMIT": 3,
+                                "LOGIN_WINDOW_SECONDS": 120, "LOGIN_BLOCK_SECONDS": 60})
+        client = restarted.test_client()
+        response = self.post("/login", {"email": "STUDENT@example.test",
+                                         "password": "wrong-password"}, client)
+        self.assertEqual(response.status_code, 429)
+        self.assertEqual(response.headers["Retry-After"], "60")
+        self.assertIn("Không thể đăng nhập lúc này", response.get_data(as_text=True))
+        with closing(sqlite3.connect(self.path)) as db:
+            stored = db.execute("SELECT identity_hash FROM login_throttle").fetchone()[0]
+        self.assertEqual(len(stored), 64)
+        self.assertNotIn("student", stored)
+
+        clock[0] += timedelta(seconds=61)
+        response = self.post("/login", {"email": "student@example.test",
+                                         "password": "local-demo-password"}, client)
+        self.assertEqual(response.status_code, 303)
+        with closing(sqlite3.connect(self.path)) as db:
+            self.assertEqual(db.execute("SELECT COUNT(*) FROM login_throttle").fetchone()[0], 0)
+
+    def test_login_errors_do_not_enumerate_accounts(self):
+        self.app.config.update(LOGIN_FAILURE_LIMIT=2, LOGIN_BLOCK_SECONDS=60)
+        self.post("/register", {"name": "Sinh viên", "email": "student@example.test",
+                                "password": "local-demo-password"})
+        responses = []
+        for email in ("student@example.test", "missing@example.test"):
+            response = self.post("/login", {"email": email, "password": "wrong-password"})
+            self.assertEqual(response.status_code, 401)
+            body = response.get_data(as_text=True)
+            self.assertIn("Email hoặc mật khẩu không đúng.", body)
+            self.assertNotIn(email, body)
+            responses.append(response.status_code)
+            blocked = self.post("/login", {"email": email, "password": "wrong-password"})
+            self.assertEqual(blocked.status_code, 429)
+            self.assertIn("Không thể đăng nhập lúc này", blocked.get_data(as_text=True))
+            responses.append(blocked.status_code)
+        self.assertEqual(responses, [401, 429, 401, 429])
+
+    def test_login_throttle_capacity_is_bounded_and_stale_rows_are_reclaimed(self):
+        clock = [datetime(2026, 9, 15, 12, 0, tzinfo=timezone.utc)]
+        self.app.config.update(AUTH_CLOCK=lambda: clock[0], LOGIN_FAILURE_LIMIT=5,
+                               LOGIN_WINDOW_SECONDS=60, LOGIN_BLOCK_SECONDS=60,
+                               LOGIN_THROTTLE_MAX_ENTRIES=1)
+        first = self.post("/login", {"email": "first@example.test", "password": "wrong"})
+        self.assertEqual(first.status_code, 401)
+        capacity = self.post("/login", {"email": "second@example.test", "password": "wrong"})
+        self.assertEqual(capacity.status_code, 429)
+        with closing(sqlite3.connect(self.path)) as db:
+            self.assertEqual(db.execute("SELECT COUNT(*) FROM login_throttle").fetchone()[0], 1)
+        clock[0] += timedelta(seconds=61)
+        reclaimed = self.post("/login", {"email": "second@example.test", "password": "wrong"})
+        self.assertEqual(reclaimed.status_code, 401)
+        with closing(sqlite3.connect(self.path)) as db:
+            self.assertEqual(db.execute("SELECT COUNT(*) FROM login_throttle").fetchone()[0], 1)
+
+    def test_logout_revokes_replayed_cookie_and_database_stores_only_token_hash(self):
+        self.account()
+        self.assertNotIn("Set-Cookie", self.client.get("/").headers)
+        with self.client.session_transaction() as current:
+            raw_token = current["auth_token"]
+        cookie = self.client.get_cookie("pbl4_session").value
+        with closing(sqlite3.connect(self.path)) as db:
+            token_hash = db.execute("SELECT token_hash FROM browser_sessions").fetchone()[0]
+        self.assertEqual(len(token_hash), 64)
+        self.assertNotEqual(token_hash, raw_token)
+        self.assertNotIn(raw_token, token_hash)
+
+        self.assertEqual(self.post("/logout").status_code, 303)
+        replay = self.app.test_client()
+        replay.set_cookie("pbl4_session", cookie)
+        self.assertEqual(replay.get("/cart").status_code, 302)
+        with replay.session_transaction() as stale:
+            self.assertNotIn("user_id", stale)
+            self.assertNotIn("auth_token", stale)
+        with closing(sqlite3.connect(self.path)) as db:
+            self.assertEqual(db.execute("SELECT COUNT(*) FROM browser_sessions").fetchone()[0], 0)
+
+    def test_session_expiry_and_per_user_capacity_revoke_old_sessions(self):
+        clock = [datetime(2026, 9, 15, 12, 0, tzinfo=timezone.utc)]
+        self.app.config.update(AUTH_CLOCK=lambda: clock[0], MAX_SESSIONS_PER_USER=2,
+                               PERMANENT_SESSION_LIFETIME=timedelta(minutes=30))
+        first = self.app.test_client()
+        self.account(client=first)
+        clock[0] += timedelta(seconds=1)
+        second = self.app.test_client()
+        self.assertEqual(self.post("/login", {"email": "student@example.test",
+                                               "password": "local-demo-password"}, second).status_code, 303)
+        clock[0] += timedelta(seconds=1)
+        third = self.app.test_client()
+        self.assertEqual(self.post("/login", {"email": "student@example.test",
+                                               "password": "local-demo-password"}, third).status_code, 303)
+        self.assertEqual(first.get("/cart").status_code, 302)
+        self.assertEqual(second.get("/cart").status_code, 200)
+        self.assertEqual(third.get("/cart").status_code, 200)
+        with closing(sqlite3.connect(self.path)) as db:
+            self.assertEqual(db.execute("SELECT COUNT(*) FROM browser_sessions").fetchone()[0], 2)
+
+        clock[0] += timedelta(minutes=31)
+        self.assertEqual(third.get("/cart").status_code, 302)
+        with closing(sqlite3.connect(self.path)) as db:
+            self.assertEqual(db.execute("SELECT COUNT(*) FROM browser_sessions").fetchone()[0], 1)
+
+    def test_auth_configuration_rejects_boolean_limits_and_naive_clock(self):
+        with self.assertRaises(ValueError):
+            create_app({"SECRET_KEY": "test-secret-" * 4, "DATABASE": self.path,
+                        "LOGIN_FAILURE_LIMIT": True})
+        with self.assertRaises(ValueError):
+            create_app({"SECRET_KEY": "test-secret-" * 4, "DATABASE": self.path,
+                        "ENABLE_HSTS": "yes"})
+        with self.assertRaises(ValueError):
+            create_app({"TESTING": True, "SECRET_KEY": "test-secret-" * 4,
+                        "DATABASE": self.path, "AUTH_CLOCK": datetime.now})
+        if os.name == "posix":
+            self.assertEqual(Path(self.path).stat().st_mode & 0o777, 0o600)
+
     def test_register_validation_and_duplicate(self):
         for data in ({"name": "A", "email": "a@b.test", "password": "long-enough-password"},
                      {"name": "Student", "email": "wrong", "password": "long-enough-password"},
@@ -118,7 +249,10 @@ class ShopTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             create_app({"SECRET_KEY": "short", "DATABASE": self.path})
         app = create_app({"SECRET_KEY": "test-secret-" * 4, "DATABASE": self.path})
-        self.assertIn("Secure", app.test_client().get("/").headers["Set-Cookie"])
+        response = app.test_client().get("/")
+        self.assertIn("Secure", response.headers["Set-Cookie"])
+        self.assertEqual(response.headers["Strict-Transport-Security"],
+                         "max-age=31536000; includeSubDomains")
 
     def test_cart_requires_login_and_limits_quantity(self):
         self.assertEqual(self.post("/cart/add/1").status_code, 302)

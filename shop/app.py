@@ -11,6 +11,8 @@ from flask import Flask, abort, flash, g, redirect, render_template, request, se
 from werkzeug.security import check_password_hash, generate_password_hash
 from werkzeug.exceptions import SecurityError
 
+from shop.auth_state import (authenticated_user, create_browser_session, record_failure,
+                             revoke_browser_session, throttle_key, throttle_remaining)
 from shop.database import close_db, get_db, initialize
 
 
@@ -21,7 +23,12 @@ def create_app(config=None):
         DATABASE=os.environ.get("SHOP_DATABASE", str(Path("runtime") / "shop.sqlite3")),
         SESSION_COOKIE_NAME="pbl4_session", SESSION_COOKIE_HTTPONLY=True,
         SESSION_COOKIE_SAMESITE="Lax", SESSION_COOKIE_SECURE=True,
+        SESSION_COOKIE_PATH="/", SESSION_REFRESH_EACH_REQUEST=False,
+        ENABLE_HSTS=True,
         PERMANENT_SESSION_LIFETIME=timedelta(hours=2),
+        AUTH_CLOCK=lambda: datetime.now(timezone.utc),
+        LOGIN_FAILURE_LIMIT=5, LOGIN_WINDOW_SECONDS=900, LOGIN_BLOCK_SECONDS=900,
+        LOGIN_THROTTLE_MAX_ENTRIES=10000, MAX_SESSIONS_PER_USER=5,
         MAX_CONTENT_LENGTH=16384, MAX_FORM_MEMORY_SIZE=16384, MAX_FORM_PARTS=20,
         TRUSTED_HOSTS=["localhost", "127.0.0.1"],
     )
@@ -29,10 +36,28 @@ def create_app(config=None):
         app.config.update(config)
     if not app.config["SECRET_KEY"] or len(app.config["SECRET_KEY"]) < 32:
         raise ValueError("Set SHOP_SECRET_KEY to a random secret of at least 32 characters")
+    for name in ("LOGIN_FAILURE_LIMIT", "LOGIN_WINDOW_SECONDS", "LOGIN_BLOCK_SECONDS",
+                 "LOGIN_THROTTLE_MAX_ENTRIES", "MAX_SESSIONS_PER_USER"):
+        if type(app.config[name]) is not int or app.config[name] <= 0:
+            raise ValueError(f"{name} must be a positive integer")
+    if type(app.config["ENABLE_HSTS"]) is not bool:
+        raise ValueError("ENABLE_HSTS must be boolean")
+    clock = app.config["AUTH_CLOCK"]
+    clock_value = clock() if callable(clock) else None
+    if (not isinstance(clock_value, datetime) or clock_value.tzinfo is None
+            or not isinstance(app.config["PERMANENT_SESSION_LIFETIME"], timedelta)
+            or app.config["PERMANENT_SESSION_LIFETIME"].total_seconds() <= 0):
+        raise ValueError("Invalid authentication clock or session lifetime")
     initialize(app.config["DATABASE"])
     app.teardown_appcontext(close_db)
     # Same password-hashing work when email does not exist; value is not an account.
     dummy_hash = generate_password_hash(secrets.token_urlsafe(32))
+
+    def auth_now():
+        now = app.config["AUTH_CLOCK"]()
+        if not isinstance(now, datetime) or now.tzinfo is None:
+            raise ValueError("AUTH_CLOCK must return a timezone-aware datetime")
+        return now.astimezone(timezone.utc)
 
     def login_required(view):
         @wraps(view)
@@ -49,8 +74,13 @@ def create_app(config=None):
         # Health checks must not create or refresh browser sessions at the ALB boundary.
         if request.endpoint == "health":
             return
-        g.user = get_db().execute("SELECT id, name, email FROM users WHERE id = ?",
-                                 (session.get("user_id"),)).fetchone()
+        g.user = None
+        user_id, auth_token = session.get("user_id"), session.get("auth_token")
+        if user_id is not None or auth_token is not None:
+            g.user = authenticated_user(get_db(), app.config["SECRET_KEY"],
+                                        user_id, auth_token, auth_now())
+            if g.user is None:
+                session.clear()
         if "csrf" not in session:
             session["csrf"] = secrets.token_urlsafe(32)
         if request.method in ("POST", "PUT", "PATCH", "DELETE"):
@@ -67,6 +97,8 @@ def create_app(config=None):
         response.headers["X-Content-Type-Options"] = "nosniff"
         response.headers["Referrer-Policy"] = "no-referrer"
         response.headers["X-Frame-Options"] = "DENY"
+        if app.config["ENABLE_HSTS"]:
+            response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
         if request.endpoint != "static":
             response.headers["Cache-Control"] = "no-store"
         return response
@@ -138,12 +170,35 @@ def create_app(config=None):
             password = request.form.get("password", "")
             if len(email) > 254 or len(password) > 128:
                 abort(400)
-            user = get_db().execute("SELECT * FROM users WHERE email = ?", (email,)).fetchone()
+            db = get_db()
+            identity = throttle_key(app.config["SECRET_KEY"], email)
+            remaining = throttle_remaining(db, identity, auth_now())
+            if remaining:
+                return (render_template("auth.html", mode="login",
+                                        error="Không thể đăng nhập lúc này. Hãy thử lại sau."),
+                        429, {"Retry-After": str(remaining)})
+            user = db.execute("SELECT * FROM users WHERE email = ?", (email,)).fetchone()
             valid = check_password_hash(user["password_hash"] if user else dummy_hash, password)
             if not user or not valid:
+                remaining = record_failure(
+                    db, identity, auth_now(), app.config["LOGIN_FAILURE_LIMIT"],
+                    app.config["LOGIN_WINDOW_SECONDS"], app.config["LOGIN_BLOCK_SECONDS"],
+                    app.config["LOGIN_THROTTLE_MAX_ENTRIES"],
+                )
+                if remaining:
+                    return (render_template("auth.html", mode="login",
+                                            error="Không thể đăng nhập lúc này. Hãy thử lại sau."),
+                            429, {"Retry-After": str(remaining)})
                 return render_template("auth.html", mode="login", error="Email hoặc mật khẩu không đúng."), 401
+            old_token = session.get("auth_token")
+            token = create_browser_session(
+                db, app.config["SECRET_KEY"], user["id"], auth_now(),
+                int(app.permanent_session_lifetime.total_seconds()),
+                app.config["MAX_SESSIONS_PER_USER"], old_token, identity,
+            )
             session.clear()
             session["user_id"] = user["id"]
+            session["auth_token"] = token
             session["csrf"] = secrets.token_urlsafe(32)
             session.permanent = True
             return redirect(url_for("catalog"), code=303)
@@ -151,6 +206,7 @@ def create_app(config=None):
 
     @app.post("/logout")
     def logout():
+        revoke_browser_session(get_db(), app.config["SECRET_KEY"], session.get("auth_token"))
         session.clear()
         return redirect(url_for("catalog"), code=303)
 

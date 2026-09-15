@@ -14,8 +14,9 @@ def load_app(path):
     if type(config.get("lab_http", False)) is not bool:
         raise ValueError("lab_http must be boolean")
     secret = Path(config["secret_file"]).read_text(encoding="ascii").strip()
+    lab_http = config.get("lab_http", False)
     app = create_app({"SECRET_KEY": secret, "DATABASE": config["database"],
-                      "SESSION_COOKIE_SECURE": not config.get("lab_http", False)})
+                      "SESSION_COOKIE_SECURE": not lab_http, "ENABLE_HSTS": not lab_http})
     return app, port
 
 

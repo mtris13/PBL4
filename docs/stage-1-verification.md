@@ -42,6 +42,8 @@ output XSS được escape và traversal không đọc được file bên ngoài
 ## Các hành vi an toàn đã kiểm tra
 
 - Đăng ký/login/logout, hash scrypt, secret bắt buộc, Secure mặc định/HttpOnly/SameSite.
+  Chặng Arch sau đó bổ sung persistent login throttle, revocable session, fixed lifetime,
+  giới hạn phiên và HSTS production; không hồi tố các mục này thành bằng chứng chặng 1.
 - CSRF sai/thiếu/Unicode bị từ chối; token thay sau login.
 - Host không tin cậy trả 400; forwarded host không chi phối ứng dụng.
 - Giá/total từ client không được tin; checkout transaction giữ tồn kho và chống đơn trùng.

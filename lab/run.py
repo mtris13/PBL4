@@ -39,7 +39,8 @@ class LocalLab:
         except FileExistsError:
             pass
         app = create_app({"SECRET_KEY": key_path.read_text(encoding="ascii").strip(),
-                          "DATABASE": str(self.runtime / "shop.sqlite3"), "SESSION_COOKIE_SECURE": False})
+                          "DATABASE": str(self.runtime / "shop.sqlite3"),
+                          "SESSION_COOKIE_SECURE": False, "ENABLE_HSTS": False})
         settings = replace(load_settings(), policy=AddressPolicy(trusted_proxies=config["trusted_proxies"]))
         self.watcher = Watcher(settings, self.runtime / "access.jsonl", self.runtime / "audit.jsonl",
                                config["poll_seconds"], self.runtime / "watcher.checkpoint.json")

@@ -66,6 +66,7 @@ class ArchConfigTests(unittest.TestCase):
             self.assertEqual(port, 8081)
             self.assertEqual(app.test_client().get("/healthz").status_code, 200)
             self.assertFalse(app.config["SESSION_COOKIE_SECURE"])
+            self.assertFalse(app.config["ENABLE_HSTS"])
             config["lab_http"] = False
             path.write_text(json.dumps(config))
             app, _ = load_app(path)

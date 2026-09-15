@@ -55,15 +55,16 @@ của máy này trỏ tới bản MSYS 3.14 không có pip, nên hãy dùng đú
   Có thể dùng `--config path/to/local.json` cho cả `lab.run` và `lab.demo`.
 - `security/config/`: luật và threshold dùng chung. Lab ghi đè trusted proxy bằng config
   local, không đổi policy mặc định của core.
-- `runtime/shop.sqlite3`: users, products, cart, orders; giá là số nguyên VND, tính ở server.
+- `runtime/shop.sqlite3`: users, products, cart, orders, throttle và browser sessions;
+  giá là số nguyên VND, tính ở server. Trên POSIX file được siết mode 0600.
 - `runtime/session.key`: secret ngẫu nhiên tự tạo một lần; không commit hoặc chia sẻ.
 - `runtime/access.jsonl`: access log tối giản theo contract parser.
 - `runtime/audit.jsonl`: detection/decision/response; không chứa request payload.
 - `requirements.txt`: dependency trực tiếp; `requirements-lock.txt`: phiên bản đã kiểm thử.
 
 Runtime đã được gitignore. `.env.example` mô tả env production tương lai; code không
-tự đọc `.env`. `lab.run` tạo cấu hình local riêng, cookie Secure=false chỉ vì local HTTP.
-App factory mặc định Secure=true và từ chối secret ngắn/thiếu.
+tự đọc `.env`. `lab.run` tạo cấu hình local riêng, cookie Secure=false và HSTS=false chỉ
+vì local HTTP. App factory mặc định Secure=true, HSTS một năm và từ chối secret ngắn/thiếu.
 
 ## Luồng local
 
@@ -88,6 +89,20 @@ tra tồn kho, tính giá server-side và dùng key chống tạo đơn trùng. 
 xem được. Tham khảo [Flask security](https://flask.palletsprojects.com/en/stable/web-security/)
 và [proxy trust](https://flask.palletsprojects.com/en/stable/deploying/proxy_fix/).
 
+Login throttle dùng HMAC-SHA256 của email đã chuẩn hóa, không lưu email nhập sai: 5 lỗi
+trong 15 phút khóa định danh 15 phút và trả 429 kèm `Retry-After`. Bảng tối đa 10.000 key,
+dọn row cũ và sống qua restart SQLite. User tồn tại/không tồn tại dùng cùng thông báo và
+dummy password hash. Thành công xóa throttle. Đây là giới hạn theo định danh, không phải
+theo IP: app cố ý không tin XFF; rate limit chống password spraying/phân tán phải đặt tại
+Nginx/WAF với nguồn đã xác thực.
+
+Mỗi login phát token ngẫu nhiên; cookie ký giữ token thô, DB chỉ lưu HMAC token. Logout
+thu hồi token nên cookie cũ replay không còn hợp lệ. Session có thời hạn cố định hai giờ,
+không refresh mỗi request, tối đa 5 phiên/user và phiên cũ nhất bị thu hồi khi vượt giới
+hạn. Secret rotation vô hiệu hóa cookie/token hiện có. SQLite phù hợp một app instance;
+scale-out cần session/throttle store dùng chung. Đăng ký chưa có xác minh email, password
+reset, MFA hay quản trị thiết bị đăng nhập.
+
 ## Log và giới hạn chặng 1
 
 Access logger không lưu body, Cookie, Authorization hoặc user agent; chỉ giữ giá trị
@@ -105,8 +120,7 @@ hai watcher cho cùng file; copytruncate và nhiều rotation quá nhanh vẫn c
 được ghi sau khi fsync audit nên crash có thể lặp ít dòng nhưng không ưu tiên bỏ mất log.
 Watcher dọn TTL lúc idle và persist kết quả; đây chưa phải distributed state, lock đa worker
 hay reconciliation với luật firewall/WAF thật. DB SQLite hiện phù hợp một app instance,
-chưa hỗ trợ scale-out nhiều EC2. Session cookie đã ký vẫn có thể replay đến khi hết hạn nếu
-bị đánh cắp; cần session revocation/login throttling sau.
+chưa hỗ trợ scale-out nhiều EC2.
 
 App chưa có quản trị, thanh toán, gửi mail, quên mật khẩu hoặc upload. Proxy chỉ phục vụ
 loopback lab, không phải reverse proxy chống DoS production. Cần Nginx/ALB/WAF cho AWS.
