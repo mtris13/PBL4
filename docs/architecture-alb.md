@@ -1,6 +1,10 @@
 # Quyết định kiến trúc: EC2 sau ALB
 
-Ngày chốt: 2026-09-10. Đây là kiến trúc đích; chặng 1 mới kiểm chứng proxy local.
+> **Trạng thái: tài liệu lịch sử, đã hoãn ngày 2026-09-24.** Yêu cầu mới là desktop app
+> và REST server chạy trên hai máy LAN, không deploy website lên AWS. Nội dung dưới đây
+> được giữ làm nghiên cứu/đối chiếu, không còn là kiến trúc đích của bài nộp hiện tại.
+
+Ngày chốt lịch sử: 2026-09-10. Đây từng là kiến trúc đích; chặng 1 chỉ kiểm chứng proxy local.
 
 ```mermaid
 flowchart LR

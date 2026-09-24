@@ -125,3 +125,57 @@ def revoke_browser_session(db, secret, raw_token):
     token_hash = digest(secret, "browser-session-v1", raw_token)
     db.execute("DELETE FROM browser_sessions WHERE token_hash=?", (token_hash,))
     db.commit()
+
+
+def create_api_session(db, secret, user_id, now, lifetime_seconds, max_sessions,
+                       cleared_throttle=None):
+    current = timestamp(now)
+    raw_token = secrets.token_urlsafe(32)
+    token_hash = digest(secret, "api-session-v1", raw_token)
+    try:
+        db.execute("BEGIN IMMEDIATE")
+        db.execute("DELETE FROM api_sessions WHERE expires_at<=?", (current,))
+        if cleared_throttle:
+            db.execute("DELETE FROM login_throttle WHERE identity_hash=?", (cleared_throttle,))
+        db.execute("INSERT INTO api_sessions VALUES (?, ?, ?, ?)",
+                   (token_hash, user_id, current, current + lifetime_seconds))
+        count = db.execute("SELECT COUNT(*) FROM api_sessions WHERE user_id=?",
+                           (user_id,)).fetchone()[0]
+        stale = db.execute(
+            "SELECT token_hash FROM api_sessions WHERE user_id=? AND token_hash<>? "
+            "ORDER BY created_at ASC, token_hash ASC LIMIT ?",
+            (user_id, token_hash, max(0, count - max_sessions)),
+        ).fetchall()
+        if stale:
+            db.executemany("DELETE FROM api_sessions WHERE token_hash=?",
+                           ((row["token_hash"],) for row in stale))
+        db.commit()
+        return raw_token
+    except Exception:
+        db.rollback()
+        raise
+
+
+def authenticated_api_user(db, secret, raw_token, now):
+    if not isinstance(raw_token, str) or not 20 <= len(raw_token) <= 128:
+        return None
+    current = timestamp(now)
+    token_hash = digest(secret, "api-session-v1", raw_token)
+    row = db.execute(
+        "SELECT u.id, u.name, u.email FROM api_sessions s "
+        "JOIN users u ON u.id=s.user_id "
+        "WHERE s.token_hash=? AND s.expires_at>?",
+        (token_hash, current),
+    ).fetchone()
+    if row is None:
+        db.execute("DELETE FROM api_sessions WHERE token_hash=?", (token_hash,))
+        db.commit()
+    return row
+
+
+def revoke_api_session(db, secret, raw_token):
+    if not isinstance(raw_token, str) or not raw_token:
+        return
+    token_hash = digest(secret, "api-session-v1", raw_token)
+    db.execute("DELETE FROM api_sessions WHERE token_hash=?", (token_hash,))
+    db.commit()

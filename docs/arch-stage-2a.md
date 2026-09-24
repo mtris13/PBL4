@@ -1,5 +1,9 @@
 # Chặng 2A — Git và Nginx thật trên Arch
 
+> Cập nhật 2026-09-24: Arch stack này sẽ làm máy server cho desktop client trên máy thứ
+> hai. Loopback topology bên dưới là bằng chứng lịch sử và regression lab; bước LAN/TLS
+> phải có cấu hình, firewall và kiểm chứng riêng, không tự coi là đã hoàn thành.
+
 Môi trường người dùng cung cấp: Arch x86_64, Python 3.14.7/pip, Nginx, UFW,
 iptables, nftables và Git đã cài; có sudo; chưa có web service tự cấu hình.
 Nginx/UFW/nftables/firewalld báo inactive. Trạng thái service không khẳng định

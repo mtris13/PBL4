@@ -63,6 +63,14 @@ CREATE TABLE IF NOT EXISTS browser_sessions (
 );
 CREATE INDEX IF NOT EXISTS browser_sessions_user_created
   ON browser_sessions(user_id, created_at DESC);
+CREATE TABLE IF NOT EXISTS api_sessions (
+  token_hash TEXT PRIMARY KEY CHECK(length(token_hash) = 64),
+  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  created_at INTEGER NOT NULL,
+  expires_at INTEGER NOT NULL CHECK(expires_at > created_at)
+);
+CREATE INDEX IF NOT EXISTS api_sessions_user_created
+  ON api_sessions(user_id, created_at DESC);
 """
 
 

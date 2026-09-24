@@ -1,4 +1,4 @@
-"""Run the storefront, a loopback proxy and the dry-run analyzer together."""
+"""Run the shop server, a loopback reverse proxy and the dry-run analyzer together."""
 
 import argparse
 import json
@@ -75,7 +75,7 @@ class LocalLab:
 
 
 def main(argv=None):
-    parser = argparse.ArgumentParser(description="PBL4 local lab behind a simulated ALB; loopback only")
+    parser = argparse.ArgumentParser(description="PBL4 local reverse-proxy lab; loopback only")
     parser.add_argument("--config", type=Path, default=Path(__file__).with_name("local.json"))
     args = parser.parse_args(argv)
     try:
@@ -87,7 +87,7 @@ def main(argv=None):
     lab.start()
     print(f"Storefront: http://127.0.0.1:{config['proxy_port']}", flush=True)
     print(f"Audit: {lab.runtime / 'audit.jsonl'}", flush=True)
-    print("Local ALB append-mode emulator; security is DRY-RUN. Ctrl+C to stop.", flush=True)
+    print("Local reverse-proxy security lab; DRY-RUN. Ctrl+C to stop.", flush=True)
     try:
         while not lab.watcher.stop.wait(1):
             if lab.watcher.error or not all(thread.is_alive() for thread in lab.threads):

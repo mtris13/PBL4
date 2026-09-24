@@ -7,10 +7,11 @@ from functools import wraps
 from pathlib import Path
 from uuid import uuid4
 
-from flask import Flask, abort, flash, g, redirect, render_template, request, session, url_for
+from flask import Flask, abort, flash, g, jsonify, redirect, render_template, request, session, url_for
 from werkzeug.security import check_password_hash, generate_password_hash
 from werkzeug.exceptions import SecurityError
 
+from shop.api import create_api_blueprint
 from shop.auth_state import (authenticated_user, create_browser_session, record_failure,
                              revoke_browser_session, throttle_key, throttle_remaining)
 from shop.database import close_db, get_db, initialize
@@ -29,6 +30,7 @@ def create_app(config=None):
         AUTH_CLOCK=lambda: datetime.now(timezone.utc),
         LOGIN_FAILURE_LIMIT=5, LOGIN_WINDOW_SECONDS=900, LOGIN_BLOCK_SECONDS=900,
         LOGIN_THROTTLE_MAX_ENTRIES=10000, MAX_SESSIONS_PER_USER=5,
+        MAX_API_SESSIONS_PER_USER=5,
         MAX_CONTENT_LENGTH=16384, MAX_FORM_MEMORY_SIZE=16384, MAX_FORM_PARTS=20,
         TRUSTED_HOSTS=["localhost", "127.0.0.1"],
     )
@@ -37,7 +39,8 @@ def create_app(config=None):
     if not app.config["SECRET_KEY"] or len(app.config["SECRET_KEY"]) < 32:
         raise ValueError("Set SHOP_SECRET_KEY to a random secret of at least 32 characters")
     for name in ("LOGIN_FAILURE_LIMIT", "LOGIN_WINDOW_SECONDS", "LOGIN_BLOCK_SECONDS",
-                 "LOGIN_THROTTLE_MAX_ENTRIES", "MAX_SESSIONS_PER_USER"):
+                 "LOGIN_THROTTLE_MAX_ENTRIES", "MAX_SESSIONS_PER_USER",
+                 "MAX_API_SESSIONS_PER_USER"):
         if type(app.config[name]) is not int or app.config[name] <= 0:
             raise ValueError(f"{name} must be a positive integer")
     if type(app.config["ENABLE_HSTS"]) is not bool:
@@ -59,6 +62,8 @@ def create_app(config=None):
             raise ValueError("AUTH_CLOCK must return a timezone-aware datetime")
         return now.astimezone(timezone.utc)
 
+    app.register_blueprint(create_api_blueprint(auth_now, dummy_hash))
+
     def login_required(view):
         @wraps(view)
         def wrapped(*args, **kwargs):
@@ -75,6 +80,8 @@ def create_app(config=None):
         if request.endpoint == "health":
             return
         g.user = None
+        if request.path.startswith("/api/v1/"):
+            return
         user_id, auth_token = session.get("user_id"), session.get("auth_token")
         if user_id is not None or auth_token is not None:
             g.user = authenticated_user(get_db(), app.config["SECRET_KEY"],
@@ -97,6 +104,8 @@ def create_app(config=None):
         response.headers["X-Content-Type-Options"] = "nosniff"
         response.headers["Referrer-Policy"] = "no-referrer"
         response.headers["X-Frame-Options"] = "DENY"
+        if request.path.startswith("/api/v1/"):
+            response.headers["X-API-Version"] = "1"
         if app.config["ENABLE_HSTS"]:
             response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
         if request.endpoint != "static":
@@ -305,6 +314,11 @@ def create_app(config=None):
             # Invalid Host prevents Flask constructing a URL adapter; don't render
             # templates using url_for() in this branch.
             return app.response_class("Invalid request host.", status=400, mimetype="text/plain")
+        if request.path.startswith("/api/v1/"):
+            codes = {400: "invalid_request", 404: "not_found", 405: "method_not_allowed",
+                     413: "payload_too_large"}
+            return jsonify({"error": {"code": codes[error.code],
+                                      "message": "The API request could not be processed."}}), error.code
         return render_template("error.html", code=error.code), error.code
 
     return app

@@ -27,6 +27,12 @@ class ArchConfigTests(unittest.TestCase):
             with self.subTest(ports=ports), self.assertRaises(ValueError):
                 build_files("/home/student/PBL4", *ports)
         self.assertIn("127.0.0.1:9082", build_files("/home/student/PBL4", 9080, 9082, 9081)["nginx.conf"])
+        lan = build_files("/home/student/PBL4", lan_address="192.168.10.20")["nginx.conf"]
+        self.assertIn("listen 192.168.10.20:8080;", lan)
+        self.assertIn("listen 127.0.0.1:8080;", lan)
+        for address in ("0.0.0.0", "127.0.0.1", "8.8.8.8", "::1", "not-an-ip"):
+            with self.subTest(address=address), self.assertRaises(ValueError):
+                build_files("/home/student/PBL4", lan_address=address)
 
     def test_logs_and_units(self):
         files = build_files("/home/student/PBL4")

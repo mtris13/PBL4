@@ -37,9 +37,10 @@ http {
         '"request_uri":"$pbl4_logged_target",'
         '"status":$status,"http_user_agent":"","request_id":"$request_id",'
         '"http_x_forwarded_for":"$http_x_forwarded_for"}';
-    # Ingress emulates ALB append mode; its upstream connection uses a distinct peer.
+    # Edge reverse proxy appends client identity; its upstream uses a distinct peer.
     server {
         listen 127.0.0.1:@EDGE@;
+        @EDGE_LAN_LISTEN@
         server_name localhost 127.0.0.1;
         location / {
             proxy_bind 127.0.0.2;

@@ -198,6 +198,9 @@ class ShopTests(unittest.TestCase):
                         "LOGIN_FAILURE_LIMIT": True})
         with self.assertRaises(ValueError):
             create_app({"SECRET_KEY": "test-secret-" * 4, "DATABASE": self.path,
+                        "MAX_API_SESSIONS_PER_USER": True})
+        with self.assertRaises(ValueError):
+            create_app({"SECRET_KEY": "test-secret-" * 4, "DATABASE": self.path,
                         "ENABLE_HSTS": "yes"})
         with self.assertRaises(ValueError):
             create_app({"TESTING": True, "SECRET_KEY": "test-secret-" * 4,

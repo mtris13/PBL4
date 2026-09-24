@@ -1,8 +1,9 @@
-# PBL4 — Mộc Shop & Security Lab
+# PBL4 — Mộc Shop Client–Server & Security Lab
 
-**Kiến trúc đích đã chọn: website EC2 sau Application Load Balancer (ALB).**
-Chặng 1 cung cấp website chạy local, proxy mô phỏng ALB append-mode, access log thật
-và analyzer đọc liên tục ở chế độ dry-run. Đây chưa phải hệ thống đã triển khai AWS.
+**Kiến trúc đích hiện tại: desktop app trên máy client gọi REST API trên máy server Linux.**
+Theo thay đổi yêu cầu ngày 2026-09-24, dự án không deploy thành website công khai. Flask
+vẫn được giữ làm JSON API server; web/Jinja cũ chỉ còn là regression UI trong lúc chuyển
+đổi. Hai máy giao tiếp qua LAN, server giữ SQLite, Nginx/UFW, access log và analyzer.
 
 ## Chạy ngay trên máy hiện tại
 
@@ -12,10 +13,21 @@ Trong PowerShell tại `D:\SEM5\PBL4`:
 .\.venv\Scripts\python.exe -m lab.run
 ```
 
-Mở [Mộc Shop local](http://127.0.0.1:8080). Chọn **Đăng nhập → Tạo tài khoản**, dùng
+Mở [Mộc Shop local](http://127.0.0.1:8080) để kiểm tra regression UI. Chọn
+**Đăng nhập → Tạo tài khoản**, dùng
 email và mật khẩu chỉ dành cho lab. Không có tài khoản/mật khẩu mặc định. Có thể xem
 sản phẩm, tìm kiếm/lọc, thêm giỏ hàng, bỏ sản phẩm và đặt đơn mô phỏng.
 Không yêu cầu thẻ, địa chỉ thật hay thanh toán. Ctrl+C ở terminal để dừng cả lab.
+
+REST nền tảng dùng prefix `/api/v1`. Kiểm tra nhanh khi lab đang chạy:
+
+```text
+GET http://127.0.0.1:8080/api/v1/health
+GET http://127.0.0.1:8080/api/v1/products
+```
+
+Contract dành cho hai nhóm nằm ở [docs/api-contract.md](docs/api-contract.md); hướng dẫn
+nhóm server ở [docs/server-team-handoff.md](docs/server-team-handoff.md).
 
 Mở terminal thứ hai để chạy demo hoặc xem audit:
 
@@ -55,7 +67,7 @@ của máy này trỏ tới bản MSYS 3.14 không có pip, nên hãy dùng đú
   Có thể dùng `--config path/to/local.json` cho cả `lab.run` và `lab.demo`.
 - `security/config/`: luật và threshold dùng chung. Lab ghi đè trusted proxy bằng config
   local, không đổi policy mặc định của core.
-- `runtime/shop.sqlite3`: users, products, cart, orders, throttle và browser sessions;
+- `runtime/shop.sqlite3`: users, products, cart, orders, throttle, browser/API sessions;
   giá là số nguyên VND, tính ở server. Trên POSIX file được siết mode 0600.
 - `runtime/session.key`: secret ngẫu nhiên tự tạo một lần; không commit hoặc chia sẻ.
 - `runtime/access.jsonl`: access log tối giản theo contract parser.
@@ -69,10 +81,10 @@ vì local HTTP. App factory mặc định Secure=true, HSTS một năm và từ 
 ## Luồng local
 
 ```text
-Browser 127.0.0.1 → proxy :8080 (append XFF)
-                  → backend :8081, peer nguồn proxy 127.0.0.2
-                  → Flask + SQLite
-                  → access.jsonl → file watcher → security core → audit.jsonl
+Regression UI/API client 127.0.0.1 → proxy :8080 (append XFF)
+                                    → backend :8081, peer nguồn proxy 127.0.0.2
+                                    → Flask + SQLite
+                                    → access.jsonl → security core → audit.jsonl
 ```
 
 Proxy kết nối backend bằng **127.0.0.2**, còn trình duyệt là **127.0.0.1**. Hai IP khác
@@ -103,6 +115,12 @@ hạn. Secret rotation vô hiệu hóa cookie/token hiện có. SQLite phù hợ
 scale-out cần session/throttle store dùng chung. Đăng ký chưa có xác minh email, password
 reset, MFA hay quản trị thiết bị đăng nhập.
 
+Desktop API dùng token opaque riêng qua `Authorization: Bearer`, không dùng cookie hoặc
+CSRF. DB chỉ lưu HMAC purpose-separated trong `api_sessions`; token sống cố định hai giờ,
+tối đa 5 token/user và logout thu hồi ngay. Browser token không dùng thay API token. API
+nền tảng hiện có health, register/login/logout, `me`, product list/search/detail; cart và
+order API được khóa contract để nhóm server triển khai tiếp.
+
 ## Log và giới hạn chặng 1
 
 Access logger không lưu body, Cookie, Authorization hoặc user agent; chỉ giữ giá trị
@@ -126,8 +144,8 @@ mất log. Watcher dọn TTL lúc idle và persist kết quả; đây chưa ph�
 đa worker hay reconciliation với luật firewall/WAF thật. DB SQLite hiện phù hợp một app
 instance, chưa hỗ trợ scale-out nhiều EC2.
 
-App chưa có quản trị, thanh toán, gửi mail, quên mật khẩu hoặc upload. Proxy chỉ phục vụ
-loopback lab, không phải reverse proxy chống DoS production. Cần Nginx/ALB/WAF cho AWS.
+App chưa có quản trị, thanh toán, gửi mail, quên mật khẩu hoặc upload. Proxy hiện chỉ phục
+vụ loopback; cấu hình LAN hai máy, TLS và desktop UI là chặng kế tiếp.
 Lab Arch đã xác nhận Docker published port đi qua DNAT/FORWARD và bypass UFW INPUT trên
 ruleset hiện tại. Container tương lai phải dùng policy `DOCKER-USER`/network riêng hoặc
 không publish ra interface ngoài; không coi `ufw default deny incoming` là đủ cho Docker.
@@ -139,16 +157,18 @@ không publish ra interface ngoài; không coi `ufw default deny incoming` là �
 .\.venv\Scripts\python.exe -m pip check
 ```
 
-Test dùng SQLite tạm thời và socket loopback, không gọi AWS hay thay firewall.
-Cấu trúc: `shop/` website, `lab/` công cụ local, `security/` core độc lập, `tests/`
-website/live log/HTTP, `docs/` kiến trúc và tiến độ. Xem thêm:
+Test dùng SQLite tạm thời và socket loopback, không gọi dịch vụ ngoài hay thay firewall.
+Cấu trúc: `client/` desktop app, `shop/` REST server + regression web UI, `lab/` công cụ
+local, `security/` core độc lập, `tests/` API/web/live log/HTTP và `docs/`. Xem thêm:
 
-- [Kiến trúc sau ALB và vai trò firewall/WAF](docs/architecture-alb.md)
+- [API contract client–server](docs/api-contract.md)
+- [Bàn giao nhóm shop server](docs/server-team-handoff.md)
+- [Checklist demo hai máy](docs/two-machine-demo.md)
 - [Các chặng, đầu ra và điều kiện nghiệm thu](docs/milestones.md)
 - [Security core và contract JSONL](security/README.md)
 
 Chặng Arch đã có Nginx/user services, firewall lab, persistent auth state và bounded log
-rotation. Phần tiếp theo là hạ tầng AWS sau ALB và WAF; chưa gọi API hay tạo tài nguyên AWS.
+rotation. Phần tiếp theo là cart/order REST API, desktop client và kiểm thử trên hai máy LAN.
 
 ## Chặng 2A trên Arch Linux
 

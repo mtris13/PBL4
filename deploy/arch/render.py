@@ -1,5 +1,6 @@
 """Render Arch lab configuration only; no service install, sudo or firewall calls."""
 import argparse
+import ipaddress
 import json
 import re
 import secrets
@@ -7,7 +8,8 @@ import sys
 from pathlib import Path, PurePosixPath
 
 
-def build_files(project, edge_port=8080, origin_port=8082, backend_port=8081):
+def build_files(project, edge_port=8080, origin_port=8082, backend_port=8081,
+                lan_address=None):
     if not project.startswith("/") or not re.fullmatch(r"/[A-Za-z0-9_./-]+", project):
         raise ValueError("Use an absolute Linux project path without spaces or special characters")
     if ".." in PurePosixPath(project).parts:
@@ -15,11 +17,23 @@ def build_files(project, edge_port=8080, origin_port=8082, backend_port=8081):
     ports = (edge_port, origin_port, backend_port)
     if any(type(p) is not int or not 1024 <= p <= 65535 for p in ports) or len(set(ports)) != 3:
         raise ValueError("Use three distinct unprivileged ports")
+    lan_listen = ""
+    if lan_address is not None:
+        try:
+            address = ipaddress.ip_address(lan_address)
+        except ValueError as error:
+            raise ValueError("LAN address must be an RFC1918 IPv4 address") from error
+        private_networks = tuple(ipaddress.ip_network(value) for value in
+                                 ("10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"))
+        if address.version != 4 or not any(address in network for network in private_networks):
+            raise ValueError("LAN address must be an RFC1918 IPv4 address")
+        lan_listen = f"listen {address}:{edge_port};"
     project = project.rstrip("/")
     runtime = f"{project}/runtime/arch"
     python = f"{project}/.venv/bin/python"
     nginx = Path(__file__).with_name("nginx.conf.template").read_text(encoding="utf-8")
-    for token, value in {"RUNTIME": runtime, "EDGE": edge_port, "ORIGIN": origin_port, "BACKEND": backend_port}.items():
+    for token, value in {"RUNTIME": runtime, "EDGE": edge_port, "ORIGIN": origin_port,
+                         "BACKEND": backend_port, "EDGE_LAN_LISTEN": lan_listen}.items():
         nginx = nginx.replace("@" + token + "@", str(value))
 
     def unit(description, command, extra="", dependencies=""):
@@ -76,11 +90,14 @@ def main(argv=None):
     parser.add_argument("--edge-port", type=int, default=8080)
     parser.add_argument("--origin-port", type=int, default=8082)
     parser.add_argument("--backend-port", type=int, default=8081)
+    parser.add_argument("--lan-address",
+                        help="Optional exact RFC1918 IPv4 address for the desktop client")
     args = parser.parse_args(argv)
     if sys.platform != "linux":
         parser.error("Run this on Linux after cloning and creating .venv")
     project = Path(__file__).resolve().parents[2]
-    files = build_files(project.as_posix(), args.edge_port, args.origin_port, args.backend_port)
+    files = build_files(project.as_posix(), args.edge_port, args.origin_port,
+                        args.backend_port, args.lan_address)
     output = project / "runtime" / "arch"
     output.mkdir(parents=True, exist_ok=True, mode=0o700)
     output.chmod(0o700)
