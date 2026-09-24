@@ -42,7 +42,13 @@ curl http://127.0.0.1:8080/api/v1/health
 - SQLite schema, seed 6 sản phẩm và browser flow cũ để regression.
 - Test API nền tảng trong `tests/test_api.py`.
 
-## Việc nhóm server nhận
+## Cập nhật bản demo
+
+Nhánh codex/demo-client-server đã triển khai cart/order REST, lịch sử đơn và Tkinter
+desktop. Xem [DEMO.md](DEMO.md) để chạy. Những đầu việc bên dưới là checklist đã dùng
+khi triển khai; công việc tiếp theo là xác nhận hai máy Linux/client, TLS và enforcement.
+
+## Checklist cart/order
 
 1. Triển khai cart API đúng contract: GET cart, PUT quantity cuối cùng, DELETE item.
 2. Triển khai order API: transaction stock, server-side price, idempotency key và ownership.

@@ -1,4 +1,5 @@
 import json
+import os
 import unittest
 from copy import deepcopy
 from dataclasses import replace
@@ -70,13 +71,15 @@ class LiveLogTests(unittest.TestCase):
         self.assertEqual(payload["offset"], self.input.stat().st_size)
         self.assertEqual(payload["line_number"], 1)
         self.assertNotIn("union", checkpoint.read_text(encoding="utf-8").lower())
-        self.assertEqual(checkpoint.stat().st_mode & 0o777, 0o600)
+        if os.name == 'posix':
+            self.assertEqual(checkpoint.stat().st_mode & 0o777, 0o600)
 
         checkpoint.chmod(0o644)
         resumed = Watcher(load_settings(), self.input, self.output, checkpoint_path=checkpoint)
         try:
             self.assertTrue(resumed.resumed)
-            self.assertEqual(checkpoint.stat().st_mode & 0o777, 0o600)
+            if os.name == 'posix':
+                self.assertEqual(checkpoint.stat().st_mode & 0o777, 0o600)
             self.assertEqual(resumed.lines, 1)
             self.assertEqual(resumed.step(), [])
             with self.input.open("a", encoding="utf-8") as stream:
@@ -250,6 +253,7 @@ class LiveLogTests(unittest.TestCase):
         finally:
             resumed.follower.close()
 
+    @unittest.skipUnless(os.name == 'posix', 'Rename of an open log requires POSIX file semantics')
     def test_rename_rotation_drains_old_inode_before_new_file(self):
         rotated = self.root / "access.jsonl.1"
         self.input.write_text(line(seconds=0) + "\n", encoding="utf-8")

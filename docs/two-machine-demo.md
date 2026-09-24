@@ -1,5 +1,8 @@
 # Checklist demo hai máy
 
+> Người mới bắt đầu: dùng [DEMO.md](DEMO.md) để chạy desktop và server từng bước.
+> Checklist bên dưới dành cho đối chiếu cấu hình mạng.
+
 Không điền IP giả vào source. Trước buổi demo, ghi nhận từ hai máy:
 
 | Giá trị | Ví dụ | Người xác nhận |

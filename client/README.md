@@ -1,18 +1,24 @@
-# Desktop client
+# Mộc Shop desktop client
 
-Thư mục dành cho desktop app; chưa khóa toolkit UI. Khuyến nghị PySide6 vì client và server
-cùng hệ Python, nhưng UI có thể dùng toolkit khác nếu vẫn tuân thủ `docs/api-contract.md`.
+Ứng dụng Tkinter, chạy Windows/Linux, chỉ dùng thư viện chuẩn Python. Không cài Flask,
+không import shop, không đọc SQLite. Chạy từ thư mục gốc bằng `python -m client`,
+hoặc nhấp đúp `run-client.cmd` trên Windows / `bash run-client.sh` trên Linux.
 
-Nguyên tắc bắt buộc:
+Đọc [hướng dẫn demo từng bước](../docs/DEMO.md) để cài server và kết nối hai máy.
+Nhánh demo: `codex/demo-client-server`.
 
-- Base URL lấy từ config local, ví dụ `http://192.168.1.20:8080/api/v1`; không hard-code IP.
-- Không import `shop`, không mở SQLite và không dùng chung filesystem với server.
-- Chỉ giao tiếp bằng HTTP JSON; timeout connect/read phải hữu hạn.
-- Giữ bearer token trong RAM cho demo; logout xóa token kể cả khi network lỗi.
-- Không log password, token hoặc toàn bộ Authorization header.
-- Không tự retry POST order; replay chỉ dùng cùng `Idempotency-Key` theo contract.
-- Hiển thị lỗi dựa trên HTTP status và `error.code`, không phụ thuộc nguyên văn message.
-- HTTP LAN chỉ dùng tài khoản giả cho demo sơ bộ; bản cuối phải xác thực server bằng HTTPS.
+Chức năng: đăng ký, đăng nhập/đăng xuất, tìm kiếm sản phẩm, giỏ hàng, đặt đơn, lịch sử
+và chi tiết đơn. Giá/stock/ownership được kiểm tra bởi server. Token chỉ ở RAM;
+config home `.pbl4-client.json` chỉ chứa server URL. Request có timeout 8 giây,
+chạy ngoài luồng giao diện; không tự retry POST. Đơn mất response giữ Idempotency-Key
+cho lần retry do người dùng bấm. Không đổi giỏ/đăng xuất khi kết quả đơn chưa xác nhận.
+Đóng cưỡng bức ứng dụng làm mất key đang giữ trong RAM: đăng nhập lại và kiểm tra
+lịch sử đơn trước khi tạo đơn khác.
 
-Nhóm client làm trên branch `feature/desktop-client`. Trước khi code màn hình, hãy kiểm tra
-được `/api/v1/health`, `/products`, login, `/me` và logout bằng một HTTP client tối giản.
+Có thể truyền URL ban đầu:
+```bash
+python -m client --server http://192.168.1.20:8080
+```
+
+HTTP chỉ dùng cho LAN demo với tài khoản giả. HTTPS dùng certificate validation mặc định;
+không có tùy chọn bỏ qua xác thực chứng chỉ. API contract: [docs/api-contract.md](../docs/api-contract.md).

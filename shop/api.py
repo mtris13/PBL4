@@ -2,6 +2,8 @@
 
 import re
 import sqlite3
+import hashlib
+from uuid import uuid4
 from functools import wraps
 
 from flask import Blueprint, current_app, g, jsonify, request
@@ -159,5 +161,114 @@ def create_api_blueprint(auth_now, dummy_hash):
         if row is None:
             return error("not_found", "Product was not found.", 404)
         return jsonify({"product": product_json(row)})
+
+
+    def cart_json(db):
+        rows = db.execute(
+            "SELECT p.id, p.name, p.price, p.stock, c.quantity FROM cart c "
+            "JOIN products p ON p.id=c.product_id WHERE c.user_id=? ORDER BY p.id",
+            (g.user["id"],),
+        ).fetchall()
+        items = [{"product": {k: row[k] for k in ("id", "name", "price", "stock")},
+                  "quantity": row["quantity"], "line_total": row["price"] * row["quantity"]}
+                 for row in rows]
+        return {"items": items, "total": sum(item["line_total"] for item in items)}
+
+    def order_json(db, row):
+        items = db.execute(
+            "SELECT product_id, name, price, quantity FROM order_items WHERE order_id=? ORDER BY product_id",
+            (row["id"],),
+        ).fetchall()
+        return {"id": row["id"], "total": row["total"], "created_at": row["created_at"],
+                "items": [dict(item) for item in items]}
+
+    @api.get("/cart")
+    @login_required
+    def cart():
+        return jsonify(cart_json(get_db()))
+
+    @api.put("/cart/items/<int:product_id>")
+    @login_required
+    def put_cart(product_id):
+        payload, invalid = json_object(("quantity",))
+        if invalid:
+            return invalid
+        quantity = payload["quantity"]
+        if type(quantity) is not int:
+            return error("invalid_fields", "Quantity must be an integer.", 400)
+        db = get_db()
+        with db:
+            db.execute("BEGIN IMMEDIATE")
+            product = db.execute("SELECT stock FROM products WHERE id=?", (product_id,)).fetchone()
+            if product is None:
+                return error("not_found", "Product was not found.", 404)
+            if not 1 <= quantity <= 10 or quantity > product["stock"]:
+                return error("stock_unavailable", "Quantity exceeds the limit or available stock.", 409)
+            db.execute("INSERT INTO cart(user_id, product_id, quantity) VALUES (?, ?, ?) "
+                       "ON CONFLICT(user_id, product_id) DO UPDATE SET quantity=excluded.quantity",
+                       (g.user["id"], product_id, quantity))
+            result = cart_json(db)
+        return jsonify(result)
+
+    @api.delete("/cart/items/<int:product_id>")
+    @login_required
+    def delete_cart(product_id):
+        db = get_db()
+        with db:
+            db.execute("DELETE FROM cart WHERE user_id=? AND product_id=?", (g.user["id"], product_id))
+        return "", 204
+
+    @api.post("/orders")
+    @login_required
+    def checkout():
+        key = request.headers.get("Idempotency-Key", "")
+        if not re.fullmatch(r"[!-~]{1,100}", key):
+            return error("invalid_idempotency_key", "Use 1-100 printable ASCII characters without spaces.", 400)
+        # Separate API users and browser keys without migrating existing orders.
+        stored_key = f"api:{g.user['id']}:" + hashlib.sha256(key.encode("ascii")).hexdigest()
+        if request.get_data():
+            return error("invalid_request", "Order takes contents from the server cart; omit the body.", 400)
+        db = get_db()
+        with db:
+            db.execute("BEGIN IMMEDIATE")
+            existing = db.execute("SELECT * FROM orders WHERE checkout_key=? AND user_id=?",
+                                  (stored_key, g.user["id"])).fetchone()
+            if existing:
+                return jsonify({"order": order_json(db, existing)}), 200
+            cart = cart_json(db)
+            if not cart["items"]:
+                return error("empty_cart", "The cart is empty.", 409)
+            if any(item["quantity"] > item["product"]["stock"] for item in cart["items"]):
+                return error("stock_unavailable", "Stock changed; update the cart.", 409)
+            order_id = uuid4().hex
+            created = auth_now().isoformat()
+            db.execute("INSERT INTO orders(id, user_id, checkout_key, total, created_at) VALUES (?, ?, ?, ?, ?)",
+                       (order_id, g.user["id"], stored_key, cart["total"], created))
+            for item in cart["items"]:
+                product = item["product"]
+                db.execute("INSERT INTO order_items VALUES (?, ?, ?, ?, ?)",
+                           (order_id, product["id"], product["name"], product["price"], item["quantity"]))
+                db.execute("UPDATE products SET stock=stock-? WHERE id=?", (item["quantity"], product["id"]))
+            db.execute("DELETE FROM cart WHERE user_id=?", (g.user["id"],))
+            row = db.execute("SELECT * FROM orders WHERE id=?", (order_id,)).fetchone()
+            result = order_json(db, row)
+        return jsonify({"order": result}), 201
+
+    @api.get("/orders")
+    @login_required
+    def orders():
+        db = get_db()
+        rows = db.execute("SELECT * FROM orders WHERE user_id=? ORDER BY created_at DESC, id DESC LIMIT 100",
+                          (g.user["id"],)).fetchall()
+        return jsonify({"items": [order_json(db, row) for row in rows]})
+
+    @api.get("/orders/<order_id>")
+    @login_required
+    def order(order_id):
+        db = get_db()
+        row = db.execute("SELECT * FROM orders WHERE id=? AND user_id=?", (order_id, g.user["id"])).fetchone()
+        if row is None:
+            return error("not_found", "Order was not found.", 404)
+        return jsonify({"order": order_json(db, row)})
 
     return api

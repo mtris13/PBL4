@@ -5,6 +5,16 @@ Theo thay đổi yêu cầu ngày 2026-09-24, dự án không deploy thành webs
 vẫn được giữ làm JSON API server; web/Jinja cũ chỉ còn là regression UI trong lúc chuyển
 đổi. Hai máy giao tiếp qua LAN, server giữ SQLite, Nginx/UFW, access log và analyzer.
 
+
+## Demo hai máy — bắt đầu tại đây
+
+Bản demo hoàn chỉnh nằm trên nhánh **codex/demo-client-server**.
+Đọc **[hướng dẫn từng bước cho người mới](docs/DEMO.md)**: bạn chạy server Linux,
+một thành viên mở desktop client Windows/Linux. Có đăng ký/đăng nhập, sản phẩm,
+giỏ hàng, đặt đơn và lịch sử. Client Windows nhấp đúp **run-client.cmd**;
+server dùng **bash scripts/server.sh setup IP_SERVER** sau khi cài phần mềm trong hướng dẫn.
+HTTP LAN dùng tài khoản giả; analyzer vẫn dry-run.
+
 ## Chạy ngay trên máy hiện tại
 
 Trong PowerShell tại `D:\SEM5\PBL4`:
@@ -118,8 +128,8 @@ reset, MFA hay quản trị thiết bị đăng nhập.
 Desktop API dùng token opaque riêng qua `Authorization: Bearer`, không dùng cookie hoặc
 CSRF. DB chỉ lưu HMAC purpose-separated trong `api_sessions`; token sống cố định hai giờ,
 tối đa 5 token/user và logout thu hồi ngay. Browser token không dùng thay API token. API
-nền tảng hiện có health, register/login/logout, `me`, product list/search/detail; cart và
-order API được khóa contract để nhóm server triển khai tiếp.
+hiện có health, register/login/logout, `me`, product list/search/detail; cart và
+order API đã triển khai transaction, ownership và idempotency cho desktop client.
 
 ## Log và giới hạn chặng 1
 
@@ -144,8 +154,8 @@ mất log. Watcher dọn TTL lúc idle và persist kết quả; đây chưa ph�
 đa worker hay reconciliation với luật firewall/WAF thật. DB SQLite hiện phù hợp một app
 instance, chưa hỗ trợ scale-out nhiều EC2.
 
-App chưa có quản trị, thanh toán, gửi mail, quên mật khẩu hoặc upload. Proxy hiện chỉ phục
-vụ loopback; cấu hình LAN hai máy, TLS và desktop UI là chặng kế tiếp.
+App chưa có quản trị, thanh toán, gửi mail, quên mật khẩu hoặc upload. Proxy Python local chỉ phục
+vụ loopback; Nginx có cấu hình LAN và desktop UI đã có. TLS và kiểm chứng hai máy thật là bước tiếp theo.
 Lab Arch đã xác nhận Docker published port đi qua DNAT/FORWARD và bypass UFW INPUT trên
 ruleset hiện tại. Container tương lai phải dùng policy `DOCKER-USER`/network riêng hoặc
 không publish ra interface ngoài; không coi `ufw default deny incoming` là đủ cho Docker.
@@ -168,7 +178,7 @@ local, `security/` core độc lập, `tests/` API/web/live log/HTTP và `docs/`
 - [Security core và contract JSONL](security/README.md)
 
 Chặng Arch đã có Nginx/user services, firewall lab, persistent auth state và bounded log
-rotation. Phần tiếp theo là cart/order REST API, desktop client và kiểm thử trên hai máy LAN.
+rotation. Cart/order REST API và desktop client đã có trên nhánh demo; bước tiếp theo là kiểm thử trên hai máy LAN, TLS và enforcement.
 
 ## Chặng 2A trên Arch Linux
 

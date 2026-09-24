@@ -76,6 +76,9 @@ def make_proxy(port, backend_port, source_ip="127.0.0.2"):
                 connection.close()
 
         do_POST = do_GET
+        do_PUT = do_GET
+        do_DELETE = do_GET
+        do_PATCH = do_GET
         do_HEAD = do_GET
         do_OPTIONS = do_GET
 

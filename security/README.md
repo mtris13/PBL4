@@ -1,5 +1,9 @@
 # PBL4 — Security core, giai đoạn 1
 
+> Kiến trúc đích hiện tại là desktop client–server qua LAN. Những phần AWS/ALB/WAF
+> bên dưới là hướng nghiên cứu lịch sử; không phải yêu cầu demo hiện tại.
+> Hướng dẫn đang dùng: [docs/DEMO.md](../docs/DEMO.md).
+
 Module Python **3.12+**, chạy độc lập bằng access log Nginx JSONL, không cần AWS,
 website đang chạy hay dependency bên ngoài. Môi trường phát triển hiện có Python
 3.14.7; cú pháp được giữ tương thích 3.12. Chưa kiểm thử runtime 3.12 trên máy này.

@@ -1,4 +1,4 @@
-# API contract v0.1 — desktop client ↔ shop server
+# API contract v0.2 — desktop client ↔ shop server
 
 Ngày khóa cho demo sơ bộ: 2026-09-24. File này là nguồn sự thật chung cho nhóm client và
 server. Không tự đổi path, field, kiểu dữ liệu hoặc status code trên một nhánh riêng; mọi
@@ -135,7 +135,7 @@ Danh sách trả 200:
 Chi tiết trả `{"product": {...}}`; không tìm thấy trả 404 `not_found`. `q` tối đa 200,
 `category` tối đa 40 ký tự. Hai endpoint catalog hiện là public.
 
-## Phần nhóm server tiếp tục triển khai
+## Cart và order đã triển khai
 
 Mọi endpoint dưới đây cần bearer token. Không nhận `user_id`, giá hoặc total từ client.
 
@@ -207,6 +207,18 @@ GET /api/v1/orders/{order_id}
 ```
 
 Chỉ chủ sở hữu được xem. Không tồn tại hoặc không thuộc user đều trả cùng 404 `not_found`.
+
+### Lịch sử đơn hàng
+
+GET /api/v1/orders (cần bearer token).
+
+Trả 200 với object {"items": [order, ...]}, dùng cùng object order như chi tiết đơn.
+Chỉ trả đơn của user hiện tại, tối đa 100 đơn mới nhất theo created_at giảm dần.
+Bao gồm đơn tạo từ web regression cùng tài khoản. Chưa có pagination.
+
+POST order không nhận body. Idempotency-Key dùng 1–100 ký tự ASCII in được,
+không có dấu cách; client dùng UUID hex. Cùng key của user khác không xung đột.
+Gửi body (kể cả total/user_id giả) trả 400 invalid_request.
 
 ## Status code chung
 

@@ -1,5 +1,8 @@
 # Chặng 2A — Git và Nginx thật trên Arch
 
+> Bản desktop demo mới dùng nhánh codex/demo-client-server và hướng dẫn
+> [DEMO.md](DEMO.md). Các bước main bên dưới là quy trình lịch sử.
+
 > Cập nhật 2026-09-24: Arch stack này sẽ làm máy server cho desktop client trên máy thứ
 > hai. Loopback topology bên dưới là bằng chứng lịch sử và regression lab; bước LAN/TLS
 > phải có cấu hình, firewall và kiểm chứng riêng, không tự coi là đã hoàn thành.

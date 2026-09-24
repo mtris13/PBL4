@@ -7,7 +7,7 @@ với bằng chứng thực nghiệm trong lab được phép. Không deploy th�
 | Chặng | Đầu ra | Điều kiện xong |
 | --- | --- | --- |
 | **1. Bản web local (đã xong, giữ regression)** | Website + SQLite, proxy append XFF, access log, watcher, dry-run, test và README | Đăng ký → đăng nhập → mua hàng mô phỏng; bốn detector nhận request HTTP local; không tin XFF giả |
-| **2. Linux và vận hành security** | Nginx thật, app service, analyzer service, log redaction/rotation, checkpoint + flood/lease state dry-run, health-check policy, login throttling/session hardening; WAF response plan | Reboot/restart có hành vi rõ ràng, log thật đúng contract; cấu hình firewall được review và kiểm thử trong lab |
+| **2. Linux và vận hành security** | Nginx thật, app service, analyzer service, log redaction/rotation, checkpoint + flood/lease state dry-run, health-check policy, login throttling/session hardening; kế hoạch enforcement LAN | Reboot/restart có hành vi rõ ràng, log thật đúng contract; cấu hình firewall được review và kiểm thử trong lab |
 | **3. REST API và desktop client** | API v1, opaque bearer token, cart/order transaction, desktop UI và config server URL | Máy client đăng nhập, xem sản phẩm, thao tác cart/order mà không truy cập DB trực tiếp |
 | **4. Hai máy và enforcement LAN** | Nginx/TLS trên server, UFW chỉ allow luồng cần thiết, log IP client, controlled block/unblock | Client hợp lệ hoạt động; peer ngoài policy bị deny; có bằng chứng log/firewall và không tự khóa quản trị |
 | **5. Báo cáo và demo** | Sơ đồ, bảng số liệu, kịch bản demo, ảnh/log đã lọc, phân công, giới hạn, cleanup | Thành viên khác chạy được theo README và giải thích được các lớp phòng thủ |
@@ -36,3 +36,6 @@ thử lịch sử nằm trong `docs/stage-1-verification.md`.
 Phân biệt *đã viết code*, *đã kiểm thử loopback*, *đã kiểm thử Linux* và *đã kiểm thử hai
 máy LAN*. Chỉ điền số liệu/ảnh thực sự thu được. Không hồi tố kết quả proxy/ALB mô phỏng
 thành bằng chứng hai máy; phải ghi IP/port/topology và ruleset thật của buổi demo.
+
+Bản demo trên nhánh codex/demo-client-server đã có cart/order REST và desktop Tkinter;
+chặng 3 còn cần nghiệm thu hai máy thực tế. Hướng dẫn: [DEMO.md](DEMO.md).
